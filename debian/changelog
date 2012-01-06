@@ -1,0 +1,7 @@
+gst-plugins-good0.10 (0.10.29-18slp2+15) unstable; urgency=low
+
+  * Initial Release
+  * Git: 165.213.180.144:pkgs/g/gst-plugins-good0.10
+  * Tag: gst-plugins-good0.10_0.10.29-18slp2+15
+
+ -- Sangchul Lee <sc11.lee@samsung.com>  Wed, 07 Dec 2011 12:35:33 +0900
