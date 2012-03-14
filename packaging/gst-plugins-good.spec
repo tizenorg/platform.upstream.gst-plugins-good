@@ -6,7 +6,7 @@ Group:      TO_BE/FILLED_IN
 License:    TO_BE/FILLED_IN
 Source0:    %{name}-%{version}.tar.gz
 Patch0 :    gst-plugins-good-disable-gtk-doc.patch
-BuildRequires:  gettext
+BuildRequires:  gettext-tools
 BuildRequires:  which
 BuildRequires:  gst-plugins-base-devel  
 BuildRequires:  libjpeg-devel
