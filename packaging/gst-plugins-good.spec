@@ -3,7 +3,7 @@ Summary:    GStreamer plugins from the "good" set
 Version:    0.10.29
 Release:    1
 Group:      TO_BE/FILLED_IN
-License:    TO_BE/FILLED_IN
+License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
 Patch0 :    gst-plugins-good-disable-gtk-doc.patch
 BuildRequires:  gettext-tools
