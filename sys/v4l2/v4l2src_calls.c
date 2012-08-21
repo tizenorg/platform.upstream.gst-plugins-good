@@ -202,11 +202,6 @@ too_many_trials:
   }
 }
 
-/* Note about fraction simplification
- * n1/d1 == n2/d2  is also written as  n1 == ( n2 * d1 ) / d2
- */
-#define fractions_are_equal(n1,d1,n2,d2) ((n1) == gst_util_uint64_scale_int((n2), (d1), (d2)))
-
 /******************************************************
  * gst_v4l2src_set_capture():
  *   set capture parameters
@@ -241,12 +236,11 @@ gst_v4l2src_set_capture (GstV4l2Src * v4l2src, guint32 pixelformat,
     goto done;
   }
 
-  /* Note: V4L2 provides the frame interval, we have the frame rate */
-  if (fractions_are_equal (stream.parm.capture.timeperframe.numerator,
-          stream.parm.capture.timeperframe.denominator, fps_d, fps_n)) {
-    GST_DEBUG_OBJECT (v4l2src, "Desired framerate already set");
-    goto already_set;
-  }
+  /* We used to skip frame rate setup if the camera was already setup
+     with the requested frame rate. This breaks some cameras though,
+     causing them to not output data (several models of Thinkpad cameras
+     have this problem at least).
+     So, don't skip. */
 
   /* We want to change the frame rate, so check whether we can. Some cheap USB
    * cameras don't have the capability */
@@ -268,8 +262,6 @@ gst_v4l2src_set_capture (GstV4l2Src * v4l2src, guint32 pixelformat,
         GST_ERROR_SYSTEM);
     goto done;
   }
-
-already_set:
 
   v4l2src->fps_n = fps_n;
   v4l2src->fps_d = fps_d;

@@ -130,7 +130,7 @@ gst_edgetv_transform (GstBaseTransform * trans, GstBuffer * in, GstBuffer * out)
       p = *src;
       q = *(src - 4);
 
-      /* difference between the current pixel and right neighbor. */
+      /* difference between the current pixel and left neighbor. */
       r = ((p & 0xff0000) - (q & 0xff0000)) >> 16;
       g = ((p & 0xff00) - (q & 0xff00)) >> 8;
       b = (p & 0xff) - (q & 0xff);
@@ -189,8 +189,12 @@ gst_edgetv_transform (GstBaseTransform * trans, GstBuffer * in, GstBuffer * out)
       dest[width + 3] = v3;
       dest[width * 2] = v2;
       dest[width * 2 + 1] = v2;
+      dest[width * 2 + 2] = 0;
+      dest[width * 2 + 3] = 0;
       dest[width * 3] = v2;
       dest[width * 3 + 1] = v2;
+      dest[width * 3 + 2] = 0;
+      dest[width * 3 + 3] = 0;
 
       src += 4;
       dest += 4;
@@ -234,10 +238,10 @@ gst_edgetv_base_init (gpointer g_class)
       "Filter/Effect/Video",
       "Apply edge detect on video", "Wim Taymans <wim.taymans@chello.be>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_edgetv_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_edgetv_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_edgetv_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_edgetv_src_template);
 }
 
 static void

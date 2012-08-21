@@ -86,12 +86,18 @@
 #include "config.h"
 #endif
 
+/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
+ * with newer GLib versions (>= 2.31.0) */
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include <string.h>
 
 #include "videomixer2.h"
 #include "videomixer2pad.h"
 
 #include <gst/controller/gstcontroller.h>
+
+#include "gst/glib-compat-private.h"
 
 #ifdef DISABLE_ORC
 #define orc_memset memset
@@ -760,7 +766,7 @@ gst_videomixer2_fill_queues (GstVideoMixer2 * mix,
 
         if (buf == mixcol->queued) {
           gst_buffer_unref (buf);
-          gst_buffer_replace (mixcol->queued, NULL);
+          gst_buffer_replace (&mixcol->queued, NULL);
         } else {
           gst_buffer_unref (buf);
           buf = gst_collect_pads2_pop (mix->collect, &mixcol->collect);
@@ -770,6 +776,7 @@ gst_videomixer2_fill_queues (GstVideoMixer2 * mix,
       } else if (start_time >= output_end_time) {
         GST_DEBUG_OBJECT (pad, "Keeping buffer until %" GST_TIME_FORMAT,
             GST_TIME_ARGS (start_time));
+        gst_buffer_unref (buf);
         eos = FALSE;
       } else {
         GST_DEBUG_OBJECT (pad, "Too old buffer -- dropping");
@@ -1576,8 +1583,9 @@ done:
 }
 
 static GstFlowReturn
-gst_videomixer2_sink_prepare_buffer (GstCollectPads2 * pads,
-    GstCollectData2 * data, GstBuffer * buf, GstVideoMixer2 * mix)
+gst_videomixer2_sink_clip (GstCollectPads2 * pads,
+    GstCollectData2 * data, GstBuffer * buf, GstBuffer ** outbuf,
+    GstVideoMixer2 * mix)
 {
   GstVideoMixer2Pad *pad = GST_VIDEO_MIXER2_PAD (data->pad);
   GstVideoMixer2Collect *mixcol = pad->mixcol;
@@ -1586,14 +1594,17 @@ gst_videomixer2_sink_prepare_buffer (GstCollectPads2 * pads,
   start_time = GST_BUFFER_TIMESTAMP (buf);
   if (start_time == -1) {
     GST_ERROR_OBJECT (pad, "Timestamped buffers required!");
+    gst_buffer_unref (buf);
     return GST_FLOW_ERROR;
   }
 
   end_time = GST_BUFFER_DURATION (buf);
   if (end_time == -1)
     end_time = gst_util_uint64_scale_int (GST_SECOND, pad->fps_d, pad->fps_n);
-  if (end_time == -1)
+  if (end_time == -1) {
+    *outbuf = buf;
     return GST_FLOW_OK;
+  }
 
   start_time = MAX (start_time, mixcol->collect.segment.start);
   start_time =
@@ -1614,9 +1625,12 @@ gst_videomixer2_sink_prepare_buffer (GstCollectPads2 * pads,
   }
 
   if (mixcol->buffer != NULL && end_time < mixcol->end_time) {
-    return GST_COLLECT_PADS2_FLOW_DROP;
+    gst_buffer_unref (buf);
+    *outbuf = NULL;
+    return GST_FLOW_OK;
   }
 
+  *outbuf = buf;
   return GST_FLOW_OK;
 }
 
@@ -1923,10 +1937,8 @@ gst_videomixer2_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
 
   gst_element_class_set_details_simple (element_class, "Video mixer 2",
       "Filter/Editor/Video",
@@ -1987,8 +1999,8 @@ gst_videomixer2_init (GstVideoMixer2 * mix, GstVideoMixer2Class * g_class)
       mix);
   gst_collect_pads2_set_event_function (mix->collect,
       (GstCollectPads2EventFunction) gst_videomixer2_sink_event, mix);
-  gst_collect_pads2_set_prepare_buffer_function (mix->collect,
-      (GstCollectPads2BufferFunction) gst_videomixer2_sink_prepare_buffer, mix);
+  gst_collect_pads2_set_clip_function (mix->collect,
+      (GstCollectPads2ClipFunction) gst_videomixer2_sink_clip, mix);
 
   mix->lock = g_mutex_new ();
   /* initialize variables */

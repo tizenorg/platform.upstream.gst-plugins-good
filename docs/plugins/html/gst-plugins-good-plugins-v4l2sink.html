@@ -3,12 +3,12 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <title>v4l2sink</title>
-<meta name="generator" content="DocBook XSL Stylesheets V1.75.2">
+<meta name="generator" content="DocBook XSL Stylesheets V1.76.1">
 <link rel="home" href="index.html" title="GStreamer Good Plugins 0.10 Plugins Reference Manual">
 <link rel="up" href="ch01.html" title="gst-plugins-good Elements">
 <link rel="prev" href="gst-plugins-good-plugins-v4l2src.html" title="v4l2src">
 <link rel="next" href="gst-plugins-good-plugins-v4l2radio.html" title="v4l2radio">
-<meta name="generator" content="GTK-Doc V1.17 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.18 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -24,6 +24,8 @@
 <a href="#gst-plugins-good-plugins-v4l2sink.synopsis" class="shortcut">Top</a>
                    | 
                   <a href="#gst-plugins-good-plugins-v4l2sink.description" class="shortcut">Description</a>
+                   | 
+                  <a href="#gst-plugins-good-plugins-v4l2sink.implemented-interfaces" class="shortcut">Implemented Interfaces</a>
                    | 
                   <a href="#gst-plugins-good-plugins-v4l2sink.properties" class="shortcut">Properties</a>
 </td></tr>
@@ -41,6 +43,12 @@
 <a name="gst-plugins-good-plugins-v4l2sink.synopsis"></a><h2>Synopsis</h2>
 <pre class="synopsis">struct              <a class="link" href="gst-plugins-good-plugins-v4l2sink.html#GstV4l2Sink" title="struct GstV4l2Sink">GstV4l2Sink</a>;
 </pre>
+</div>
+<div class="refsect1">
+<a name="gst-plugins-good-plugins-v4l2sink.implemented-interfaces"></a><h2>Implemented Interfaces</h2>
+<p>
+GstV4l2Sink implements
+ <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gstreamer/html/GstImplementsInterface.html">GstImplementsInterface</a>,  <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gst-plugins-base-libs/html/gst-plugins-base-libs-gstxoverlay.html#GstXOverlay">GstXOverlay</a>,  <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gst-plugins-base-libs/html/gst-plugins-base-libs-gstnavigation.html#GstNavigation">GstNavigation</a>,  <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gst-plugins-base-libs/html/gst-plugins-base-libs-gstcolorbalance.html#GstColorBalance">GstColorBalance</a>,  <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gst-plugins-base-libs/html/gst-plugins-base-libs-gstvideoorientation.html#GstVideoOrientation">GstVideoOrientation</a> and  <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gst-plugins-base-libs/html/gst-plugins-base-libs-gstpropertyprobe.html#GstPropertyProbe">GstPropertyProbe</a>.</p>
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-v4l2sink.properties"></a><h2>Properties</h2>
@@ -67,48 +75,6 @@
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-v4l2sink.description"></a><h2>Description</h2>
-<p>
-v4l2sink can be used to display video to v4l2 devices (screen overlays
-provided by the graphics hardware, tv-out, etc)
-</p>
-<p>
-</p>
-<div class="refsect2">
-<a name="idp21431792"></a><h3>Example launch lines</h3>
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch videotestsrc <span class="gtkdoc opt">!</span> v4l2sink device<span class="gtkdoc opt">=/</span>dev<span class="gtkdoc opt">/</span>video1</pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- This pipeline displays a test pattern on /dev/video1
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch <span class="gtkdoc opt">-</span>v videotestsrc <span class="gtkdoc opt">!</span> navigationtest <span class="gtkdoc opt">!</span> v4l2sink</pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- A pipeline to test navigation events.
-While moving the mouse pointer over the test signal you will see a black box
-following the mouse pointer. If you press the mouse button somewhere on the
-video and release it somewhere else a green box will appear where you pressed
-the button and a red one where you released it. (The navigationtest element
-is part of gst-plugins-good.) You can observe here that even if the images
-are scaled through hardware the pointer coordinates are converted back to the
-original video frame geometry so that the box can be drawn to the correct
-position. This also handles borders correctly, limiting coordinates to the
-image area
-</div>
-<p>
-</p>
 <p>
 </p>
 </div>
@@ -137,7 +103,7 @@ image area
 <a name="GstV4l2Sink--device-fd"></a><h3>The <code class="literal">"device-fd"</code> property</h3>
 <pre class="programlisting">  "device-fd"                <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read</pre>
 <p>File descriptor of the device.</p>
-<p>Allowed values: &gt;= G_MAXULONG</p>
+<p>Allowed values: &gt;= -1</p>
 <p>Default value: -1</p>
 </div>
 <hr>
@@ -257,6 +223,6 @@ image area
 </div>
 <div class="footer">
 <hr>
-          Generated by GTK-Doc V1.17</div>
+          Generated by GTK-Doc V1.18</div>
 </body>
 </html>

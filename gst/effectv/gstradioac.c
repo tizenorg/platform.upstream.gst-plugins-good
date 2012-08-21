@@ -134,14 +134,15 @@ enum
 #define RATIO 0.95
 
 static guint32 palettes[COLORS * PATTERN];
+static gint swap_tab[] = { 2, 1, 0, 3 };
 
 GST_BOILERPLATE (GstRadioacTV, gst_radioactv, GstVideoFilter,
     GST_TYPE_VIDEO_FILTER);
 
 #if G_BYTE_ORDER == G_LITTLE_ENDIAN
-#define CAPS_STR GST_VIDEO_CAPS_RGBx
+#define CAPS_STR GST_VIDEO_CAPS_RGBx "; " GST_VIDEO_CAPS_BGRx
 #else
-#define CAPS_STR GST_VIDEO_CAPS_xBGR
+#define CAPS_STR GST_VIDEO_CAPS_xBGR "; " GST_VIDEO_CAPS_xRGB
 #endif
 
 static GstStaticPadTemplate gst_radioactv_src_template =
@@ -165,18 +166,20 @@ makePalette (void)
 
 #define DELTA (255/(COLORS/2-1))
 
+  /* red, gree, blue */
   for (i = 0; i < COLORS / 2; i++) {
     palettes[i] = i * DELTA;
     palettes[COLORS + i] = (i * DELTA) << 8;
     palettes[COLORS * 2 + i] = (i * DELTA) << 16;
   }
   for (i = 0; i < COLORS / 2; i++) {
-    palettes[+i + COLORS / 2] = 255 | (i * DELTA) << 16 | (i * DELTA) << 8;
+    palettes[i + COLORS / 2] = 255 | (i * DELTA) << 16 | (i * DELTA) << 8;
     palettes[COLORS + i + COLORS / 2] =
         (255 << 8) | (i * DELTA) << 16 | i * DELTA;
     palettes[COLORS * 2 + i + COLORS / 2] =
         (255 << 16) | (i * DELTA) << 8 | i * DELTA;
   }
+  /* white */
   for (i = 0; i < COLORS; i++) {
     palettes[COLORS * 3 + i] = (255 * i / COLORS) * 0x10101;
   }
@@ -341,7 +344,19 @@ gst_radioactv_transform (GstBaseTransform * trans, GstBuffer * in,
   dest = (guint32 *) GST_BUFFER_DATA (out);
 
   GST_OBJECT_LOCK (filter);
-  palette = &palettes[COLORS * filter->color];
+#if G_BYTE_ORDER == G_LITTLE_ENDIAN
+  if (filter->format == GST_VIDEO_FORMAT_RGBx) {
+    palette = &palettes[COLORS * filter->color];
+  } else {
+    palette = &palettes[COLORS * swap_tab[filter->color]];
+  }
+#else
+  if (filter->format == GST_VIDEO_FORMAT_xBGR) {
+    palette = &palettes[COLORS * filter->color];
+  } else {
+    palette = &palettes[COLORS * swap_tab[filter->color]];
+  }
+#endif
   diff = filter->diff;
 
   if (filter->mode == 3 && filter->trigger)
@@ -405,14 +420,12 @@ gst_radioactv_set_caps (GstBaseTransform * btrans, GstCaps * incaps,
     GstCaps * outcaps)
 {
   GstRadioacTV *filter = GST_RADIOACTV (btrans);
-  GstStructure *structure;
   gboolean ret = FALSE;
 
-  structure = gst_caps_get_structure (incaps, 0);
-
   GST_OBJECT_LOCK (filter);
-  if (gst_structure_get_int (structure, "width", &filter->width) &&
-      gst_structure_get_int (structure, "height", &filter->height)) {
+
+  if (gst_video_format_parse_caps (incaps, &filter->format, &filter->width,
+          &filter->height)) {
     filter->buf_width_blocks = filter->width / 32;
     if (filter->buf_width_blocks > 255)
       goto out;
@@ -565,10 +578,10 @@ gst_radioactv_base_init (gpointer g_class)
       "FUKUCHI, Kentarou <fukuchi@users.sourceforge.net>, "
       "Sebastian Dröge <sebastian.droege@collabora.co.uk>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_radioactv_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_radioactv_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_radioactv_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_radioactv_src_template);
 }
 
 static void
@@ -616,7 +629,4 @@ gst_radioactv_init (GstRadioacTV * filter, GstRadioacTVClass * klass)
   filter->color = DEFAULT_COLOR;
   filter->interval = DEFAULT_INTERVAL;
   filter->trigger = DEFAULT_TRIGGER;
-
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SRC_PAD (filter));
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SINK_PAD (filter));
 }

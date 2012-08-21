@@ -1,12 +1,19 @@
+#sbs-git:slp/pkgs/g/gst-plugins-good0.10 gst-plugins-good 0.10.31 6e8625ba6fe94fb9d09e6c3be220b54ffaa01273
 Name:       gst-plugins-good
 Summary:    GStreamer plugins from the "good" set
-Version:    0.10.29
-Release:    1
-Group:      TO_BE/FILLED_IN
+Version:    0.10.31
+Release:    3
+Group:      Applications/Multimedia
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
-Patch0 :    gst-plugins-good-disable-gtk-doc.patch
-BuildRequires:  gettext-tools
+#Patch0 :    gst-plugins-good-divx-drm.patch
+#Patch1 :    gst-plugins-good-ebml-read.patch
+#Patch2 :    gst-plugins-good-gstrtph264pay.patch
+#Patch3 :    gst-plugins-good-mkv-demux.patch
+#Patch4 :    gst-plugins-good-parse-frame.patch
+#Patch5 :    gst-plugins-good-qtdemux.patch
+Patch6 :    gst-plugins-good-disable-gtk-doc.patch
+BuildRequires:  gettext
 BuildRequires:  which
 BuildRequires:  gst-plugins-base-devel  
 BuildRequires:  libjpeg-devel
@@ -35,63 +42,72 @@ of good-quality plug-ins under the LGPL license.
 
 %prep
 %setup -q 
-%patch0 -p1
+#%patch0 -p1
+#%patch1 -p1
+#%patch2 -p1
+#%patch3 -p1
+#%patch4 -p1
+#%patch5 -p1
+%patch6 -p1
+
 
 %build
-./autogen.sh 
-%configure  --disable-static \
-	--prefix=%{_prefix} \
+./autogen.sh
+
+export CFLAGS+=" -Wall -g -fPIC\
+ -DGST_EXT_SOUP_MODIFICATION"
+
+%configure --prefix=%{_prefix}\
+ --disable-static\
 %ifarch %{arm}
-	--enable-divx-drm \
+ --enable-divx-drm\
 %endif
-	--disable-nls \
-	--with-html-dir=/tmp/dump \
-	--disable-examples \
-	--disable-gconftool    \
-	--disable-alpha    \
-	--disable-apetag   \
-	--disable-audiofx  \
-	--disable-auparse  \
-	--disable-cutter   \
-	--disable-debugutils    \
-	--disable-deinterlace  \
-	--disable-effectv  \
-	--disable-equalizer    \
-	--disable-icydemux \
-	--disable-interleave   \
-	--disable-flx  \
-	--disable-goom \
-	--disable-goom2k1  \
-	--disable-level    \
-	--disable-monoscope    \
-	--disable-multipart    \
-	--disable-replaygain   \
-	--disable-smpte    \
-	--disable-spectrum \
-	--disable-videobox \
-	--disable-videomixer   \
-	--disable-y4m  \
-	--disable-directsound  \
-	--disable-oss  \
-	--disable-sunaudio \
-	--disable-osx_aidio    \
-	--disable-osx_video    \
-	--disable-aalib    \
-	--disable-aalibtest    \
-	--disable-annodex  \
-	--disable-cairo    \
-	--disable-esd  \
-	--disable-esdtest  \
-	--disable-flac \
-	--disable-gconf    \
-	--disable-hal  \
-	--disable-libcaca  \
-	--disable-libdv    \
-	--disable-dv1394   \
-	--disable-shout2   \
-	--disable-shout2test   \
-	--disable-speex \
-	--disable-taglib
+ --disable-nls\
+ --with-html-dir=/tmp/dump\
+ --disable-examples\
+ --disable-gconftool\
+ --disable-alpha\
+ --disable-apetag\
+ --disable-audiofx\
+ --disable-auparse\
+ --disable-cutter\
+ --disable-debugutils\
+ --disable-deinterlace\
+ --disable-effectv\
+ --disable-equalizer\
+ --disable-icydemux\
+ --disable-flx\
+ --disable-goom\
+ --disable-goom2k1\
+ --disable-level\
+ --disable-monoscope\
+ --disable-replaygain\
+ --disable-smpte\
+ --disable-spectrum\
+ --disable-videobox\
+ --disable-videomixer\
+ --disable-y4m\
+ --disable-directsound\
+ --disable-oss\
+ --disable-sunaudio\
+ --disable-osx_aidio\
+ --disable-osx_video\
+ --disable-aalib\
+ --disable-aalibtest\
+ --disable-annodex\
+ --disable-cairo\
+ --disable-esd\
+ --disable-esdtest\
+ --disable-flac\
+ --disable-gconf\
+ --disable-hal\
+ --disable-libcaca\
+ --disable-libdv\
+ --disable-dv1394\
+ --disable-shout2\
+ --disable-shout2test\
+ --disable-speex\
+ --disable-taglib
 
 
 make %{?jobs:-j%jobs}

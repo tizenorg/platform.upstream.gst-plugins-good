@@ -44,6 +44,11 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
+ * with newer GLib versions (>= 2.31.0) */
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include <string.h>
 
 #include "gstflacdec.h"
@@ -178,10 +183,10 @@ gst_flac_dec_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&flac_dec_src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&flac_dec_sink_factory));
+  gst_element_class_add_static_pad_template (element_class,
+      &flac_dec_src_factory);
+  gst_element_class_add_static_pad_template (element_class,
+      &flac_dec_sink_factory);
   gst_element_class_set_details_simple (element_class, "FLAC audio decoder",
       "Codec/Decoder/Audio",
       "Decodes FLAC lossless audio streams", "Wim Taymans <wim@fluendo.com>");
@@ -408,19 +413,23 @@ gst_flac_dec_scan_got_frame (GstFlacDec * flacdec, guint8 * data, guint size,
     return FALSE;
 
   /* sync */
-  if (data[0] != 0xFF || data[1] != 0xF8)
+  if (data[0] != 0xFF || (data[1] & 0xFC) != 0xF8)
     return FALSE;
+  if (data[1] & 1) {
+    GST_WARNING_OBJECT (flacdec, "Variable block size FLAC unsupported");
+    return FALSE;
+  }
 
-  bs = (data[2] & 0xF0) >> 8;   /* blocksize marker   */
+  bs = (data[2] & 0xF0) >> 4;   /* blocksize marker   */
   sr = (data[2] & 0x0F);        /* samplerate marker  */
-  ca = (data[3] & 0xF0) >> 8;   /* channel assignment */
+  ca = (data[3] & 0xF0) >> 4;   /* channel assignment */
   ss = (data[3] & 0x0F) >> 1;   /* sample size marker */
   pb = (data[3] & 0x01);        /* padding bit        */
 
   GST_LOG_OBJECT (flacdec,
       "got sync, bs=%x,sr=%x,ca=%x,ss=%x,pb=%x", bs, sr, ca, ss, pb);
 
-  if (sr == 0x0F || ca >= 0x0B || ss == 0x03 || ss == 0x07) {
+  if (bs == 0 || sr == 0x0F || ca >= 0x0B || ss == 0x03 || ss == 0x07) {
     return FALSE;
   }
 
@@ -702,17 +711,12 @@ gst_flac_dec_length (const FLAC__StreamDecoder * decoder,
 {
   GstFlacDec *flacdec;
   GstFormat fmt = GST_FORMAT_BYTES;
-  gint64 len;
-  GstPad *peer;
+  gint64 len = -1;
 
   flacdec = GST_FLAC_DEC (client_data);
 
-  if (!(peer = gst_pad_get_peer (flacdec->sinkpad)))
-    return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
-
-  gst_pad_query_duration (peer, &fmt, &len);
-  gst_object_unref (peer);
-  if (fmt != GST_FORMAT_BYTES || len == -1)
+  if (!gst_pad_query_peer_duration (flacdec->sinkpad, &fmt, &len) ||
+      (fmt != GST_FORMAT_BYTES || len == -1))
     return FLAC__STREAM_DECODER_LENGTH_STATUS_ERROR;
 
   *length = len;
@@ -974,7 +978,9 @@ gst_flac_dec_write (GstFlacDec * flacdec, const FLAC__Frame * frame,
 
   if (flacdec->cur_granulepos != GST_BUFFER_OFFSET_NONE) {
     /* this should be fine since it should be one flac frame per ogg packet */
-    flacdec->segment.last_stop = flacdec->cur_granulepos - samples;
+    /* note the + 1, as the granpos is the presentation time of the last sample,
+       whereas the last stop represents the end time of that sample */
+    flacdec->segment.last_stop = flacdec->cur_granulepos - samples + 1;
     GST_LOG_OBJECT (flacdec, "granulepos = %" G_GINT64_FORMAT ", samples = %u",
         flacdec->cur_granulepos, samples);
   }
@@ -1078,6 +1084,33 @@ gst_flac_dec_loop (GstPad * sinkpad)
   flacdec = GST_FLAC_DEC (GST_OBJECT_PARENT (sinkpad));
 
   GST_LOG_OBJECT (flacdec, "entering loop");
+
+  if (flacdec->eos) {
+    GST_DEBUG_OBJECT (flacdec, "Seeked after end of file");
+
+    if (flacdec->close_segment) {
+      GST_DEBUG_OBJECT (flacdec, "pushing close segment");
+      gst_pad_push_event (flacdec->srcpad, flacdec->close_segment);
+      flacdec->close_segment = NULL;
+    }
+    if (flacdec->start_segment) {
+      GST_DEBUG_OBJECT (flacdec, "pushing start segment");
+      gst_pad_push_event (flacdec->srcpad, flacdec->start_segment);
+      flacdec->start_segment = NULL;
+    }
+
+    if (flacdec->tags) {
+      gst_element_found_tags_for_pad (GST_ELEMENT (flacdec), flacdec->srcpad,
+          flacdec->tags);
+      flacdec->tags = NULL;
+    }
+
+    if ((flacdec->segment.flags & GST_SEEK_FLAG_SEGMENT) == 0) {
+      goto eos_and_pause;
+    } else {
+      goto segment_done_and_pause;
+    }
+  }
 
   if (flacdec->init) {
     GST_DEBUG_OBJECT (flacdec, "initializing new decoder");
@@ -1360,8 +1393,10 @@ gst_flac_dec_chain (GstPad * pad, GstBuffer * buf)
 
   dec = GST_FLAC_DEC (GST_PAD_PARENT (pad));
 
-  GST_LOG_OBJECT (dec, "buffer with ts=%" GST_TIME_FORMAT ", end_offset=%"
-      G_GINT64_FORMAT ", size=%u", GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)),
+  GST_LOG_OBJECT (dec,
+      "buffer with ts=%" GST_TIME_FORMAT ", offset=%" G_GINT64_FORMAT
+      ", end_offset=%" G_GINT64_FORMAT ", size=%u",
+      GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)), GST_BUFFER_OFFSET (buf),
       GST_BUFFER_OFFSET_END (buf), GST_BUFFER_SIZE (buf));
 
   if (dec->init) {
@@ -1452,6 +1487,19 @@ gst_flac_dec_chain (GstPad * pad, GstBuffer * buf)
     /* framed - there should always be enough data to decode something */
     GST_LOG_OBJECT (dec, "%u bytes available",
         gst_adapter_available (dec->adapter));
+    if (G_UNLIKELY (!dec->got_headers)) {
+      /* The first time we get audio data, we know we got all the headers.
+       * We then loop until all the metadata is processed, then do an extra
+       * "process_single" step for the audio frame. */
+      GST_DEBUG_OBJECT (dec,
+          "First audio frame, ensuring all metadata is processed");
+      if (!FLAC__stream_decoder_process_until_end_of_metadata (dec->decoder)) {
+        GST_DEBUG_OBJECT (dec, "process_until_end_of_metadata failed");
+      }
+      GST_DEBUG_OBJECT (dec,
+          "All metadata is now processed, reading to process audio data");
+      dec->got_headers = TRUE;
+    }
     if (!FLAC__stream_decoder_process_single (dec->decoder)) {
       GST_DEBUG_OBJECT (dec, "process_single failed");
     }
@@ -1622,7 +1670,7 @@ gst_flac_dec_convert_src (GstPad * pad, GstFormat src_format, gint64 src_value,
         case GST_FORMAT_BYTES:
           scale = bytes_per_sample;
         case GST_FORMAT_DEFAULT:
-          *dest_value = gst_util_uint64_scale_int (src_value,
+          *dest_value = gst_util_uint64_scale_int_round (src_value,
               scale * flacdec->sample_rate, GST_SECOND);
           break;
         default:
@@ -1697,8 +1745,9 @@ gst_flac_dec_src_query (GstPad * pad, GstQuery * query)
 
       gst_query_parse_duration (query, &fmt, NULL);
 
-      /* try any demuxers before us first */
-      if (fmt == GST_FORMAT_TIME && peer && gst_pad_query (peer, query)) {
+      /* try any demuxers or parsers before us first */
+      if ((fmt == GST_FORMAT_TIME || fmt == GST_FORMAT_DEFAULT) &&
+          peer != NULL && gst_pad_query (peer, query)) {
         gst_query_parse_duration (query, NULL, &len);
         GST_DEBUG_OBJECT (flacdec, "peer returned duration %" GST_TIME_FORMAT,
             GST_TIME_ARGS (len));
@@ -1840,6 +1889,14 @@ gst_flac_dec_handle_seek_event (GstFlacDec * flacdec, GstEvent * event)
     }
   }
 
+  /* Check if we seeked after the end of file */
+  if (start_type != GST_SEEK_TYPE_NONE && flacdec->segment.duration > 0 &&
+      start >= flacdec->segment.duration) {
+    flacdec->eos = TRUE;
+  } else {
+    flacdec->eos = FALSE;
+  }
+
   flush = ((seek_flags & GST_SEEK_FLAG_FLUSH) == GST_SEEK_FLAG_FLUSH);
 
   if (flush) {
@@ -1903,16 +1960,20 @@ gst_flac_dec_handle_seek_event (GstFlacDec * flacdec, GstEvent * event)
    * callbacks that need to behave differently when seeking */
   flacdec->seeking = TRUE;
 
-  GST_LOG_OBJECT (flacdec, "calling seek_absolute");
-  seek_ok = FLAC__stream_decoder_seek_absolute (flacdec->decoder,
-      flacdec->segment.last_stop);
-  GST_LOG_OBJECT (flacdec, "done with seek_absolute, seek_ok=%d", seek_ok);
+  if (!flacdec->eos) {
+    GST_LOG_OBJECT (flacdec, "calling seek_absolute");
+    seek_ok = FLAC__stream_decoder_seek_absolute (flacdec->decoder,
+        flacdec->segment.last_stop);
+    GST_LOG_OBJECT (flacdec, "done with seek_absolute, seek_ok=%d", seek_ok);
+  } else {
+    GST_LOG_OBJECT (flacdec, "not seeking, seeked after end of file");
+    seek_ok = TRUE;
+  }
 
   flacdec->seeking = FALSE;
 
   GST_DEBUG_OBJECT (flacdec, "performed seek to sample %" G_GINT64_FORMAT,
       flacdec->segment.last_stop);
-
 
   if (!seek_ok) {
     GST_WARNING_OBJECT (flacdec, "seek failed");
@@ -2086,6 +2147,7 @@ gst_flac_dec_change_state (GstElement * element, GstStateChange transition)
 
   switch (transition) {
     case GST_STATE_CHANGE_READY_TO_PAUSED:
+      flacdec->eos = FALSE;
       flacdec->seeking = FALSE;
       flacdec->channels = 0;
       flacdec->depth = 0;

@@ -151,10 +151,8 @@ gst_wavenc_base_init (gpointer g_class)
       "Codec/Muxer/Audio",
       "Encode raw audio into WAV", "Iain Holmes <iain@prettypeople.org>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
 
   GST_DEBUG_CATEGORY_INIT (wavenc_debug, "wavenc", 0, "WAV encoder element");
 }
@@ -179,6 +177,7 @@ gst_wavenc_init (GstWavEnc * wavenc, GstWavEncClass * klass)
       GST_DEBUG_FUNCPTR (gst_wavenc_event));
   gst_pad_set_setcaps_function (wavenc->sinkpad,
       GST_DEBUG_FUNCPTR (gst_wavenc_sink_setcaps));
+  gst_pad_use_fixed_caps (wavenc->sinkpad);
   gst_element_add_pad (GST_ELEMENT (wavenc), wavenc->sinkpad);
 
   wavenc->srcpad = gst_pad_new_from_static_template (&src_factory, "src");
@@ -275,7 +274,7 @@ gst_wavenc_sink_setcaps (GstPad * pad, GstCaps * caps)
 
   wavenc = GST_WAVENC (gst_pad_get_parent (pad));
 
-  if (wavenc->sent_header) {
+  if (wavenc->sent_header && !gst_caps_can_intersect (caps, GST_PAD_CAPS (pad))) {
     GST_WARNING_OBJECT (wavenc, "cannot change format in middle of stream");
     goto fail;
   }

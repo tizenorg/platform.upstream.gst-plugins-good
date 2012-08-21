@@ -274,10 +274,10 @@ gst_quarktv_base_init (gpointer g_class)
       "Filter/Effect/Video",
       "Motion dissolver", "FUKUCHI, Kentarou <fukuchi@users.sourceforge.net>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_quarktv_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_quarktv_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_quarktv_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_quarktv_src_template);
 }
 
 static void
@@ -306,7 +306,4 @@ gst_quarktv_init (GstQuarkTV * filter, GstQuarkTVClass * klass)
 {
   filter->planes = PLANES;
   filter->current_plane = filter->planes - 1;
-
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SRC_PAD (filter));
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SINK_PAD (filter));
 }

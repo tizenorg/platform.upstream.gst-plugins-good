@@ -34,6 +34,10 @@
 #include "config.h"
 #endif
 
+/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
+ * with newer GLib versions (>= 2.31.0) */
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include "gstflvdemux.h"
 #include "gstflvmux.h"
 
@@ -55,7 +59,7 @@ static GstStaticPadTemplate audio_src_template =
     GST_STATIC_CAPS
     ("audio/x-adpcm, layout = (string) swf, channels = (int) { 1, 2 }, rate = (int) { 5512, 11025, 22050, 44100 }; "
         "audio/mpeg, mpegversion = (int) 1, layer = (int) 3, channels = (int) { 1, 2 }, rate = (int) { 5512, 8000, 11025, 22050, 44100 }, parsed = (boolean) TRUE; "
-        "audio/mpeg, mpegversion = (int) 4, framed = (boolean) TRUE; "
+        "audio/mpeg, mpegversion = (int) 4, stream-format = (string) raw, framed = (boolean) TRUE; "
         "audio/x-nellymoser, channels = (int) { 1, 2 }, rate = (int) { 5512, 8000, 11025, 16000, 22050, 44100 }; "
         "audio/x-raw-int, endianness = (int) LITTLE_ENDIAN, channels = (int) { 1, 2 }, width = (int) 8, depth = (int) 8, rate = (int) { 5512, 11025, 22050, 44100 }, signed = (boolean) FALSE; "
         "audio/x-raw-int, endianness = (int) LITTLE_ENDIAN, channels = (int) { 1, 2 }, width = (int) 16, depth = (int) 16, rate = (int) { 5512, 11025, 22050, 44100 }, signed = (boolean) TRUE; "
@@ -83,6 +87,9 @@ GST_BOILERPLATE (GstFlvDemux, gst_flv_demux, GstElement, GST_TYPE_ELEMENT);
 #define FLV_HEADER_SIZE 13
 /* 1 byte of tag type + 3 bytes of tag data size */
 #define FLV_TAG_TYPE_SIZE 4
+
+/* two seconds - consider pts are resynced to another base if this different */
+#define RESYNC_THRESHOLD 2000
 
 static gboolean flv_demux_handle_seek_push (GstFlvDemux * demux,
     GstEvent * event);
@@ -675,7 +682,8 @@ gst_flv_demux_audio_negotiate (GstFlvDemux * demux, guint32 codec_tag,
         }
       }
       caps = gst_caps_new_simple ("audio/mpeg",
-          "mpegversion", G_TYPE_INT, 4, "framed", G_TYPE_BOOLEAN, TRUE, NULL);
+          "mpegversion", G_TYPE_INT, 4, "framed", G_TYPE_BOOLEAN, TRUE,
+          "stream-format", G_TYPE_STRING, "raw", NULL);
       break;
     }
     case 7:
@@ -756,6 +764,23 @@ gst_flv_demux_push_tags (GstFlvDemux * demux)
     demux->taglist = gst_tag_list_new ();
     demux->push_tags = FALSE;
   }
+}
+
+static void
+gst_flv_demux_update_resync (GstFlvDemux * demux, guint32 pts, gboolean discont,
+    guint32 * last, GstClockTime * offset)
+{
+  gint32 dpts = pts - *last;
+  if (!discont && ABS (dpts) >= RESYNC_THRESHOLD) {
+    /* Theoretically, we should use substract the duration of the last buffer,
+       but this demuxer sends no durations on buffers, not sure if it cannot
+       know, or just does not care to calculate. */
+    *offset -= dpts * GST_MSECOND;
+    GST_WARNING_OBJECT (demux,
+        "Large pts gap (%" G_GINT32_FORMAT " ms), assuming resync, offset now %"
+        GST_TIME_FORMAT "", dpts, GST_TIME_ARGS (*offset));
+  }
+  *last = pts;
 }
 
 static GstFlowReturn
@@ -944,8 +969,12 @@ gst_flv_demux_parse_tag_audio (GstFlvDemux * demux, GstBuffer * buffer)
     }
   }
 
+  /* detect (and deem to be resyncs)  large pts gaps */
+  gst_flv_demux_update_resync (demux, pts, demux->audio_need_discont,
+      &demux->last_audio_pts, &demux->audio_time_offset);
+
   /* Fill buffer with data */
-  GST_BUFFER_TIMESTAMP (outbuf) = pts * GST_MSECOND;
+  GST_BUFFER_TIMESTAMP (outbuf) = pts * GST_MSECOND + demux->audio_time_offset;
   GST_BUFFER_DURATION (outbuf) = GST_CLOCK_TIME_NONE;
   GST_BUFFER_OFFSET (outbuf) = demux->audio_offset++;
   GST_BUFFER_OFFSET_END (outbuf) = demux->audio_offset;
@@ -1194,7 +1223,9 @@ gst_flv_demux_parse_tag_video (GstFlvDemux * demux, GstBuffer * buffer)
 
     GST_LOG_OBJECT (demux, "got cts %d", cts);
 
-    pts = pts + cts;
+    /* avoid negative overflow */
+    if (cts >= 0 || pts >= -cts)
+      pts += cts;
   }
 
   GST_LOG_OBJECT (demux, "video tag with codec tag %u, keyframe (%d) "
@@ -1310,8 +1341,12 @@ gst_flv_demux_parse_tag_video (GstFlvDemux * demux, GstBuffer * buffer)
     }
   }
 
+  /* detect (and deem to be resyncs)  large pts gaps */
+  gst_flv_demux_update_resync (demux, pts, demux->video_need_discont,
+      &demux->last_video_pts, &demux->video_time_offset);
+
   /* Fill buffer with data */
-  GST_BUFFER_TIMESTAMP (outbuf) = pts * GST_MSECOND;
+  GST_BUFFER_TIMESTAMP (outbuf) = pts * GST_MSECOND + demux->video_time_offset;
   GST_BUFFER_DURATION (outbuf) = GST_CLOCK_TIME_NONE;
   GST_BUFFER_OFFSET (outbuf) = demux->video_offset++;
   GST_BUFFER_OFFSET_END (outbuf) = demux->video_offset;
@@ -1624,6 +1659,8 @@ gst_flv_demux_cleanup (GstFlvDemux * demux)
   demux->index_max_time = 0;
 
   demux->audio_start = demux->video_start = GST_CLOCK_TIME_NONE;
+  demux->last_audio_pts = demux->last_video_pts = 0;
+  demux->audio_time_offset = demux->video_time_offset = 0;
 
   demux->no_more_pads = FALSE;
 
@@ -3199,12 +3236,12 @@ gst_flv_demux_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&flv_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&audio_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&video_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &flv_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &audio_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &video_src_template);
   gst_element_class_set_details_simple (element_class, "FLV Demuxer",
       "Codec/Demuxer",
       "Demux FLV feeds into digital streams",

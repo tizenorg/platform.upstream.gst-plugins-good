@@ -144,11 +144,7 @@ initDistTable (GstWarpTV * filter)
 {
   gint32 halfw, halfh, *distptr;
   gint x, y;
-#ifdef PS2
   float m;
-#else
-  float m;
-#endif
 
   halfw = filter->width >> 1;
   halfh = filter->height >> 1;
@@ -264,10 +260,10 @@ gst_warptv_base_init (gpointer g_class)
       "WarpTV does realtime goo'ing of the video input",
       "Sam Lantinga <slouken@devolution.com>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_warptv_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_warptv_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_warptv_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_warptv_src_template);
 }
 
 static void
@@ -288,6 +284,5 @@ gst_warptv_class_init (GstWarpTVClass * klass)
 static void
 gst_warptv_init (GstWarpTV * warptv, GstWarpTVClass * klass)
 {
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SRC_PAD (warptv));
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SINK_PAD (warptv));
+  /* nothing to do */
 }

@@ -47,7 +47,7 @@ static GstStaticPadTemplate gst_rtp_pcma_pay_src_template =
         "application/x-rtp, "
         "media = (string) \"audio\", "
         "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
-        "clock-rate = (int) 8000, " "encoding-name = (string) \"PCMA\"")
+        "clock-rate = (int) [1, MAX ], " "encoding-name = (string) \"PCMA\"")
     );
 
 static gboolean gst_rtp_pcma_pay_setcaps (GstBaseRTPPayload * payload,
@@ -61,10 +61,10 @@ gst_rtp_pcma_pay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_pcma_pay_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_pcma_pay_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_pcma_pay_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_pcma_pay_src_template);
   gst_element_class_set_details_simple (element_class, "RTP PCMA payloader",
       "Codec/Payloader/Network/RTP",
       "Payload-encodes PCMA audio into a RTP packet",

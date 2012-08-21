@@ -31,6 +31,8 @@
 #include "gstiirequalizer3bands.h"
 #include "gstiirequalizer10bands.h"
 
+#include "gst/glib-compat-private.h"
+
 GST_DEBUG_CATEGORY (equalizer_debug);
 #define GST_CAT_DEFAULT equalizer_debug
 
@@ -658,10 +660,10 @@ gst_iir_equalizer_compute_frequencies (GstIirEqualizer * equ, guint new_count)
     /* add new bands */
     equ->bands = g_realloc (equ->bands, sizeof (GstObject *) * new_count);
     for (i = old_count; i < new_count; i++) {
-      equ->bands[i] = g_object_new (GST_TYPE_IIR_EQUALIZER_BAND, NULL);
       /* otherwise they get names like 'iirequalizerband5' */
       sprintf (name, "band%u", i);
-      gst_object_set_name (GST_OBJECT (equ->bands[i]), name);
+      equ->bands[i] = g_object_new (GST_TYPE_IIR_EQUALIZER_BAND,
+          "name", name, NULL);
       GST_DEBUG ("adding band[%d]=%p", i, equ->bands[i]);
 
       gst_object_set_parent (GST_OBJECT (equ->bands[i]), GST_OBJECT (equ));
@@ -832,26 +834,41 @@ gst_iir_equalizer_transform_ip (GstBaseTransform * btrans, GstBuffer * buf)
   GstAudioFilter *filter = GST_AUDIO_FILTER (btrans);
   GstIirEqualizer *equ = GST_IIR_EQUALIZER (btrans);
   GstClockTime timestamp;
+  gboolean need_new_coefficients;
 
   if (G_UNLIKELY (filter->format.channels < 1 || equ->process == NULL))
     return GST_FLOW_NOT_NEGOTIATED;
 
   BANDS_LOCK (equ);
-  if (equ->need_new_coefficients) {
-    update_coefficients (equ);
-    set_passthrough (equ);
-  }
+  need_new_coefficients = equ->need_new_coefficients;
   BANDS_UNLOCK (equ);
 
-  if (gst_base_transform_is_passthrough (btrans))
+  if (!need_new_coefficients && gst_base_transform_is_passthrough (btrans))
     return GST_FLOW_OK;
 
   timestamp = GST_BUFFER_TIMESTAMP (buf);
   timestamp =
       gst_segment_to_stream_time (&btrans->segment, GST_FORMAT_TIME, timestamp);
 
-  if (GST_CLOCK_TIME_IS_VALID (timestamp))
+  if (GST_CLOCK_TIME_IS_VALID (timestamp)) {
+    GstIirEqualizerBand **filters = equ->bands;
+    guint f, nf = equ->freq_band_count;
+
     gst_object_sync_values (G_OBJECT (equ), timestamp);
+
+    /* sync values for bands too */
+    /* FIXME: iterating equ->bands is not thread-safe here */
+    for (f = 0; f < nf; f++) {
+      gst_object_sync_values (G_OBJECT (filters[f]), timestamp);
+    }
+  }
+
+  BANDS_LOCK (equ);
+  if (need_new_coefficients) {
+    update_coefficients (equ);
+    set_passthrough (equ);
+  }
+  BANDS_UNLOCK (equ);
 
   equ->process (equ, GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf),
       filter->format.channels);

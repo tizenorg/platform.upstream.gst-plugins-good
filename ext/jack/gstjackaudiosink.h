@@ -58,6 +58,7 @@ struct _GstJackAudioSink {
   GstJackConnect   connect;
   gchar           *server;
   jack_client_t   *jclient;
+  gchar           *client_name;
 
   /* our client */
   GstJackAudioClient *client;
@@ -65,6 +66,7 @@ struct _GstJackAudioSink {
   /* our ports */
   jack_port_t    **ports;
   int              port_count;
+  sample_t       **buffers;
 };
 
 struct _GstJackAudioSinkClass {

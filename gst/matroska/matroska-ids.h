@@ -539,13 +539,10 @@ struct _GstMatroskaTrackContext {
 
   /* Whether the stream is EOS */
   gboolean      eos;
-
-	gboolean found_key_frame;
-	GstClockTime avg_duration;
-	GstClockTime last_ts;
-	GQueue* queue;
-	gint intra_gap;
 #ifdef MKV_DEMUX_MODIFICATION
+  GstClockTime last_ts;
+  GQueue* queue;
+
   gboolean found_next_kframe;
   gint32 num_frames_bw_keyframes;
   guint64 avg_duration_bw_keyframes;
@@ -553,7 +550,9 @@ struct _GstMatroskaTrackContext {
   GstClockTime prev_kframe_timestamp;
   GstClockTime next_kframe_timestamp;
 #endif
-  
+
+  /* any alignment we need our output buffers to have */
+  gint          alignment;
 };
 
 typedef struct _GstMatroskaTrackVideoContext {
@@ -583,7 +582,10 @@ typedef struct _GstMatroskaTrackSubtitleContext {
   GstMatroskaTrackContext parent;
 
   gboolean    check_utf8;     /* buffers should be valid UTF-8 */
+  gboolean    check_markup;   /* check if buffers contain markup
+                               * or plaintext and escape characters */
   gboolean    invalid_utf8;   /* work around broken files      */
+  gboolean    seen_markup_tag;  /* markup found in text */
 } GstMatroskaTrackSubtitleContext;
 
 typedef struct _GstMatroskaIndex {

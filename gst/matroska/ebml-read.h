@@ -52,14 +52,14 @@ typedef struct _GstEbmlMaster {
 
 typedef struct _GstEbmlRead {
   GstElement *el;
-  GstPad *sinkpad;
+
   GstBuffer *buf;
   guint64 offset;
 
   GArray *readers;
 } GstEbmlRead;
 
-typedef const guint8 * (*GstPeekData) (gpointer * context, guint peek);
+typedef GstFlowReturn (*GstPeekData) (gpointer * context, guint peek, const guint8 ** data);
 
 /* returns UNEXPECTED if not enough data */
 GstFlowReturn gst_ebml_peek_id_length    (guint32 * _id, guint64 * _length,
@@ -74,11 +74,6 @@ void          gst_ebml_read_init         (GstEbmlRead * ebml,
 void          gst_ebml_read_clear        (GstEbmlRead * ebml);
 
 GstFlowReturn gst_ebml_peek_id           (GstEbmlRead * ebml, guint32 * id);
-
-GstFlowReturn gst_ebml_read_seek         (GstEbmlRead *ebml,
-                                          guint64      offset);
-
-gint64        gst_ebml_read_get_length   (GstEbmlRead *ebml);
 
 /* return _PARSE if not enough data to read what is needed, _ERROR or _OK */
 GstFlowReturn gst_ebml_read_skip         (GstEbmlRead *ebml);

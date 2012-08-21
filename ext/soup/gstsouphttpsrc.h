@@ -70,11 +70,14 @@ struct _GstSoupHTTPSrc {
 
   gboolean have_size;          /* Received and parsed Content-Length
                                   header. */
+  guint64 file_size;
+  gint64 range_size;
   guint64 content_size;        /* Value of Content-Length header. */
   guint64 read_position;       /* Current position. */
   gboolean seekable;           /* FALSE if the server does not support
                                   Range. */
   guint64 request_position;    /* Seek to this position. */
+  gboolean seeked;
 
   /* Shoutcast/icecast metadata extraction handling. */
   gboolean iradio_mode;
@@ -87,6 +90,9 @@ struct _GstSoupHTTPSrc {
   GstStructure *extra_headers;
 
   guint timeout;
+#ifdef GST_EXT_SOUP_MODIFICATION
+  SoupCookieJar *cookie_jar;
+#endif
 };
 
 struct _GstSoupHTTPSrcClass {

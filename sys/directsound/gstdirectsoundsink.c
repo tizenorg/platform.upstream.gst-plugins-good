@@ -99,12 +99,12 @@ static GstStaticPadTemplate directsoundsink_sink_factory =
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("audio/x-raw-int, "
-        "signed = (boolean) { TRUE, FALSE }, "
+        "signed = (boolean) TRUE, "
         "width = (int) 16, "
         "depth = (int) 16, "
         "rate = (int) [ 1, MAX ], " "channels = (int) [ 1, 2 ]; "
         "audio/x-raw-int, "
-        "signed = (boolean) { TRUE, FALSE }, "
+        "signed = (boolean) FALSE, "
         "width = (int) 8, "
         "depth = (int) 8, "
         "rate = (int) [ 1, MAX ], " "channels = (int) [ 1, 2 ];"
@@ -260,8 +260,8 @@ gst_directsound_sink_base_init (gpointer g_class)
       "Direct Sound Audio Sink", "Sink/Audio",
       "Output to a sound card via Direct Sound",
       "Sebastien Moutte <sebastien@moutte.net>");
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&directsoundsink_sink_factory));
+  gst_element_class_add_static_pad_template (element_class,
+      &directsoundsink_sink_factory);
 }
 
 static void

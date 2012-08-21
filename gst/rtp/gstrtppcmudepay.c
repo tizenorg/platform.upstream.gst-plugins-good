@@ -45,19 +45,20 @@ static GstStaticPadTemplate gst_rtp_pcmu_depay_sink_template =
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
-        "clock-rate = (int) 8000, " "encoding-name = (string) \"PCMU\";"
+        "payload = (int) " GST_RTP_PAYLOAD_PCMU_STRING ", "
+        "encoding-name = (string) \"PCMU\", clock-rate = (int) 8000; "
         "application/x-rtp, "
         "media = (string) \"audio\", "
-        "payload = (int) " GST_RTP_PAYLOAD_PCMU_STRING ", "
-        "clock-rate = (int) 8000")
+        "payload = (int) " GST_RTP_PAYLOAD_DYNAMIC_STRING ", "
+        "encoding-name = (string) \"PCMU\", clock-rate = (int) [1, MAX ]")
     );
 
 static GstStaticPadTemplate gst_rtp_pcmu_depay_src_template =
 GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("audio/x-mulaw, channels = (int) 1, rate = (int) 8000")
+    GST_STATIC_CAPS ("audio/x-mulaw, "
+        "channels = (int) 1, rate = (int) [1, MAX ]")
     );
 
 static GstBuffer *gst_rtp_pcmu_depay_process (GstBaseRTPDepayload * depayload,
@@ -73,10 +74,10 @@ gst_rtp_pcmu_depay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_pcmu_depay_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_pcmu_depay_sink_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_pcmu_depay_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_pcmu_depay_sink_template);
   gst_element_class_set_details_simple (element_class, "RTP PCMU depayloader",
       "Codec/Depayloader/Network/RTP",
       "Extracts PCMU audio from RTP packets",
@@ -143,12 +144,14 @@ gst_rtp_pcmu_depay_process (GstBaseRTPDepayload * depayload, GstBuffer * buf)
   len = gst_rtp_buffer_get_payload_len (buf);
   outbuf = gst_rtp_buffer_get_payload_buffer (buf);
 
-  GST_BUFFER_DURATION (outbuf) =
-      gst_util_uint64_scale_int (len, GST_SECOND, depayload->clock_rate);
+  if (outbuf) {
+    GST_BUFFER_DURATION (outbuf) =
+        gst_util_uint64_scale_int (len, GST_SECOND, depayload->clock_rate);
 
-  if (marker) {
-    /* mark start of talkspurt with DISCONT */
-    GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+    if (marker) {
+      /* mark start of talkspurt with DISCONT */
+      GST_BUFFER_FLAG_SET (outbuf, GST_BUFFER_FLAG_DISCONT);
+    }
   }
 
   return outbuf;

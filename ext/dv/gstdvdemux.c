@@ -21,6 +21,11 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
+ * with newer GLib versions (>= 2.31.0) */
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include <string.h>
 #include <math.h>
 
@@ -174,12 +179,11 @@ gst_dvdemux_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_temp));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&video_src_temp));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&audio_src_temp));
+  gst_element_class_add_static_pad_template (element_class, &sink_temp);
+  gst_element_class_add_static_pad_template (element_class,
+      &video_src_temp);
+  gst_element_class_add_static_pad_template (element_class,
+      &audio_src_temp);
 
   gst_element_class_set_details_simple (element_class,
       "DV system stream demuxer", "Codec/Demuxer",
@@ -574,25 +578,22 @@ gst_dvdemux_src_query (GstPad * pad, GstQuery * query)
       GstFormat format;
       GstFormat format2;
       gint64 end;
-      GstPad *peer;
 
-      /* get target format */
-      gst_query_parse_duration (query, &format, NULL);
+      /* First ask the peer in the original format */
+      if (!gst_pad_peer_query (dvdemux->sinkpad, query)) {
+        /* get target format */
+        gst_query_parse_duration (query, &format, NULL);
 
-      /* change query to bytes to perform on peer */
-      gst_query_set_duration (query, GST_FORMAT_BYTES, -1);
+        /* change query to bytes to perform on peer */
+        gst_query_set_duration (query, GST_FORMAT_BYTES, -1);
 
-      if ((peer = gst_pad_get_peer (dvdemux->sinkpad))) {
-        /* ask peer for total length */
-        if (!(res = gst_pad_query (peer, query))) {
-          gst_object_unref (peer);
+        /* Now ask the peer in BYTES format and try to convert */
+        if (!gst_pad_peer_query (dvdemux->sinkpad, query)) {
           goto error;
         }
 
         /* get peer total length */
         gst_query_parse_duration (query, NULL, &end);
-
-        gst_object_unref (peer);
 
         /* convert end to requested format */
         if (end != -1) {
@@ -601,11 +602,9 @@ gst_dvdemux_src_query (GstPad * pad, GstQuery * query)
                       GST_FORMAT_BYTES, end, &format2, &end))) {
             goto error;
           }
+          gst_query_set_duration (query, format, end);
         }
-      } else {
-        end = -1;
       }
-      gst_query_set_duration (query, format, end);
       break;
     }
     case GST_QUERY_CONVERT:

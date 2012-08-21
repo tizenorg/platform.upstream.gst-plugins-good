@@ -95,14 +95,16 @@ gst_v4l2src_iface_supported (GstImplementsInterface * iface, GType iface_type)
   GstV4l2Object *v4l2object = GST_V4L2SRC (iface)->v4l2object;
 
 #ifdef HAVE_XVIDEO
-  g_assert (iface_type == GST_TYPE_TUNER ||
-      iface_type == GST_TYPE_X_OVERLAY ||
-      iface_type == GST_TYPE_COLOR_BALANCE ||
-      iface_type == GST_TYPE_VIDEO_ORIENTATION);
+  if (!(iface_type == GST_TYPE_TUNER ||
+        iface_type == GST_TYPE_X_OVERLAY ||
+        iface_type == GST_TYPE_COLOR_BALANCE ||
+        iface_type == GST_TYPE_VIDEO_ORIENTATION))
+    return FALSE;
 #else
-  g_assert (iface_type == GST_TYPE_TUNER ||
-      iface_type == GST_TYPE_COLOR_BALANCE ||
-      iface_type == GST_TYPE_VIDEO_ORIENTATION);
+  if (!(iface_type == GST_TYPE_TUNER ||
+        iface_type == GST_TYPE_COLOR_BALANCE ||
+        iface_type == GST_TYPE_VIDEO_ORIENTATION))
+    return FALSE;
 #endif
 
   if (v4l2object->video_fd == -1)
@@ -221,6 +223,7 @@ gst_v4l2src_base_init (gpointer g_class)
 {
   GstElementClass *gstelement_class = GST_ELEMENT_CLASS (g_class);
   GstV4l2SrcClass *gstv4l2src_class = GST_V4L2SRC_CLASS (g_class);
+  GstPadTemplate *pad_template;
 
   gstv4l2src_class->v4l2_class_devices = NULL;
 
@@ -232,10 +235,11 @@ gst_v4l2src_base_init (gpointer g_class)
       "Edgard Lima <edgard.lima@indt.org.br>,"
       " Stefan Kost <ensonic@users.sf.net>");
 
-  gst_element_class_add_pad_template
-      (gstelement_class,
+  pad_template =
       gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
-          gst_v4l2_object_get_all_caps ()));
+      gst_v4l2_object_get_all_caps ());
+  gst_element_class_add_pad_template (gstelement_class, pad_template);
+  gst_object_unref (pad_template);
 }
 
 static void
@@ -518,11 +522,12 @@ gst_v4l2src_negotiate (GstBaseSrc * basesrc)
       }
     }
     gst_caps_unref (thiscaps);
-    gst_caps_unref (peercaps);
   } else {
     /* no peer or peer have ANY caps, work with our own caps then */
     caps = thiscaps;
   }
+  if (peercaps)
+    gst_caps_unref (peercaps);
   if (caps) {
     caps = gst_caps_make_writable (caps);
     gst_caps_truncate (caps);

@@ -147,10 +147,10 @@ gst_rtp_mp4g_depay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_mp4g_depay_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_mp4g_depay_sink_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_mp4g_depay_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_mp4g_depay_sink_template);
 
   gst_element_class_set_details_simple (element_class,
       "RTP MPEG4 ES depayloader", "Codec/Depayloader/Network/RTP",
@@ -611,6 +611,8 @@ gst_rtp_mp4g_depay_process (GstBaseRTPDepayload * depayload, GstBuffer * buf)
               rtpmp4gdepay->next_AU_index = GST_BUFFER_OFFSET (outbuf);
               gst_rtp_mp4g_depay_flush_queue (rtpmp4gdepay);
             }
+            /* rebase next_AU_index to current rtp's first AU_index */
+            rtpmp4gdepay->next_AU_index = AU_index;
           }
           rtpmp4gdepay->prev_rtptime = rtptime;
           rtpmp4gdepay->prev_AU_num = num_AU_headers;

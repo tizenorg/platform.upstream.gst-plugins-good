@@ -61,6 +61,7 @@ struct _GstPulseSrc
 
   pa_context *context;
   pa_stream *stream;
+  guint32 source_output_idx;
 
   pa_sample_spec sample_spec;
 
@@ -70,6 +71,15 @@ struct _GstPulseSrc
   gchar *device_description;
   GstPulseMixerCtrl *mixer;
   GstPulseProbe *probe;
+
+#ifdef HAVE_PULSE_1_0
+  gdouble volume;
+  gboolean volume_set:1;
+  gboolean mute:1;
+  gboolean mute_set:1;
+
+  gint notify; /* atomic */
+#endif
 
   gboolean corked:1;
   gboolean operation_success:1;

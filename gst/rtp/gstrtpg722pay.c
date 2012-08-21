@@ -64,10 +64,10 @@ gst_rtp_g722_pay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_g722_pay_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_g722_pay_sink_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_g722_pay_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_g722_pay_sink_template);
 
   gst_element_class_set_details_simple (element_class, "RTP audio payloader",
       "Codec/Payloader/Network/RTP",
@@ -160,9 +160,11 @@ gst_rtp_g722_pay_setcaps (GstBaseRTPPayload * basepayload, GstCaps * caps)
   rtpg722pay->rate = rate;
   rtpg722pay->channels = channels;
 
-  /* octet-per-sample is 1 * channels for G722 */
+  /* bits-per-sample is 4 * channels for G722, but as the RTP clock runs at
+   * half speed (8 instead of 16 khz), pretend it's 8 bits per sample
+   * channels. */
   gst_base_rtp_audio_payload_set_samplebits_options (basertpaudiopayload,
-      4 * rtpg722pay->channels);
+      8 * rtpg722pay->channels);
 
   return res;
 

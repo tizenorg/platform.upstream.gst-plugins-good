@@ -41,6 +41,8 @@
 #include <errno.h>
 #include <string.h>
 
+#include "gst/glib-compat-private.h"
+
 GST_DEBUG_CATEGORY_STATIC (multiudpsink_debug);
 #define GST_CAT_DEFAULT (multiudpsink_debug)
 
@@ -172,8 +174,7 @@ gst_multiudpsink_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
+  gst_element_class_add_static_pad_template (element_class, &sink_template);
 
   gst_element_class_set_details_simple (element_class, "UDP packet sender",
       "Sink/Network",
@@ -214,7 +215,8 @@ gst_multiudpsink_class_init (GstMultiUDPSinkClass * klass)
    * of destinations.
    */
   gst_multiudpsink_signals[SIGNAL_ADD] =
-      g_signal_new ("add", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+      g_signal_new ("add", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
       G_STRUCT_OFFSET (GstMultiUDPSinkClass, add),
       NULL, NULL, gst_udp_marshal_VOID__STRING_INT, G_TYPE_NONE, 2,
       G_TYPE_STRING, G_TYPE_INT);
@@ -228,7 +230,8 @@ gst_multiudpsink_class_init (GstMultiUDPSinkClass * klass)
    * clients.
    */
   gst_multiudpsink_signals[SIGNAL_REMOVE] =
-      g_signal_new ("remove", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+      g_signal_new ("remove", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
       G_STRUCT_OFFSET (GstMultiUDPSinkClass, remove),
       NULL, NULL, gst_udp_marshal_VOID__STRING_INT, G_TYPE_NONE, 2,
       G_TYPE_STRING, G_TYPE_INT);
@@ -239,7 +242,8 @@ gst_multiudpsink_class_init (GstMultiUDPSinkClass * klass)
    * Clear the list of clients.
    */
   gst_multiudpsink_signals[SIGNAL_CLEAR] =
-      g_signal_new ("clear", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+      g_signal_new ("clear", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
       G_STRUCT_OFFSET (GstMultiUDPSinkClass, clear),
       NULL, NULL, g_cclosure_marshal_VOID__VOID, G_TYPE_NONE, 0);
   /**
@@ -254,7 +258,8 @@ gst_multiudpsink_class_init (GstMultiUDPSinkClass * klass)
    *           connect_time (in epoch seconds), disconnect_time (in epoch seconds)
    */
   gst_multiudpsink_signals[SIGNAL_GET_STATS] =
-      g_signal_new ("get-stats", G_TYPE_FROM_CLASS (klass), G_SIGNAL_RUN_LAST,
+      g_signal_new ("get-stats", G_TYPE_FROM_CLASS (klass),
+      G_SIGNAL_RUN_LAST | G_SIGNAL_ACTION,
       G_STRUCT_OFFSET (GstMultiUDPSinkClass, get_stats),
       NULL, NULL, gst_udp_marshal_BOXED__STRING_INT, G_TYPE_VALUE_ARRAY, 2,
       G_TYPE_STRING, G_TYPE_INT);
@@ -293,7 +298,7 @@ gst_multiudpsink_class_init (GstMultiUDPSinkClass * klass)
           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (G_OBJECT_CLASS (klass), PROP_BYTES_SERVED,
       g_param_spec_uint64 ("bytes-served", "Bytes served",
-          "Total number of bytes send to all clients", 0, G_MAXUINT64, 0,
+          "Total number of bytes sent to all clients", 0, G_MAXUINT64, 0,
           G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
   g_object_class_install_property (gobject_class, PROP_SOCKFD,
       g_param_spec_int ("sockfd", "Socket Handle",

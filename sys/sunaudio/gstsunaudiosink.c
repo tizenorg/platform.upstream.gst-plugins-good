@@ -146,8 +146,8 @@ gst_sunaudiosink_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_sunaudiosink_factory));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_sunaudiosink_factory);
   gst_element_class_set_details_simple (element_class, "Sun Audio Sink",
       "Sink/Audio",
       "Audio sink for Sun Audio devices",
@@ -208,7 +208,7 @@ gst_sunaudiosink_init (GstSunAudioSink * sunaudiosink)
     audiodev = DEFAULT_DEVICE;
   sunaudiosink->device = g_strdup (audiodev);
 
-  /* mutex and gconf used to control the write method */
+  /* mutex and gcond used to control the write method */
   sunaudiosink->write_mutex = g_mutex_new ();
   sunaudiosink->sleep_cond = g_cond_new ();
 }

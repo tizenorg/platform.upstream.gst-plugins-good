@@ -68,20 +68,23 @@ GST_DEBUG_CATEGORY_STATIC (mpeg_audio_parse_debug);
 #define XING_TOC_FLAG        0x0004
 #define XING_VBR_SCALE_FLAG  0x0008
 
+#define MIN_FRAME_SIZE       6
+
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
     GST_STATIC_CAPS ("audio/mpeg, "
         "mpegversion = (int) 1, "
         "layer = (int) [ 1, 3 ], "
-        "rate = (int) [ 8000, 48000 ], channels = (int) [ 1, 2 ],"
-        "parsed=(boolean) true")
+        "mpegaudioversion = (int) [ 1, 3], "
+        "rate = (int) [ 8000, 48000 ], "
+        "channels = (int) [ 1, 2 ], " "parsed=(boolean) true")
     );
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("audio/mpeg, mpegversion = (int) 1, parsed=(boolean)false")
+    GST_STATIC_CAPS ("audio/mpeg, mpegversion = (int) 1")
     );
 
 static void gst_mpeg_audio_parse_finalize (GObject * object);
@@ -97,6 +100,7 @@ static GstFlowReturn gst_mpeg_audio_parse_pre_push_frame (GstBaseParse * parse,
 static gboolean gst_mpeg_audio_parse_convert (GstBaseParse * parse,
     GstFormat src_format, gint64 src_value,
     GstFormat dest_format, gint64 * dest_value);
+static GstCaps *gst_mpeg_audio_parse_get_sink_caps (GstBaseParse * parse);
 
 GST_BOILERPLATE (GstMpegAudioParse, gst_mpeg_audio_parse, GstBaseParse,
     GST_TYPE_BASE_PARSE);
@@ -142,10 +146,9 @@ gst_mpeg_audio_parse_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_details_simple (element_class, "MPEG1 Audio Parser",
       "Codec/Parser/Audio",
@@ -174,6 +177,8 @@ gst_mpeg_audio_parse_class_init (GstMpegAudioParseClass * klass)
   parse_class->pre_push_frame =
       GST_DEBUG_FUNCPTR (gst_mpeg_audio_parse_pre_push_frame);
   parse_class->convert = GST_DEBUG_FUNCPTR (gst_mpeg_audio_parse_convert);
+  parse_class->get_sink_caps =
+      GST_DEBUG_FUNCPTR (gst_mpeg_audio_parse_get_sink_caps);
 
   /* register tags */
 #define GST_TAG_CRC      "has-crc"
@@ -237,7 +242,7 @@ gst_mpeg_audio_parse_start (GstBaseParse * parse)
 {
   GstMpegAudioParse *mp3parse = GST_MPEG_AUDIO_PARSE (parse);
 
-  gst_base_parse_set_min_frame_size (GST_BASE_PARSE (mp3parse), 1024);
+  gst_base_parse_set_min_frame_size (GST_BASE_PARSE (mp3parse), MIN_FRAME_SIZE);
   GST_DEBUG_OBJECT (parse, "starting");
 
   gst_mpeg_audio_parse_reset (mp3parse);
@@ -553,6 +558,9 @@ gst_mpeg_audio_parse_check_valid_frame (GstBaseParse * parse,
     *skipsize = off + 2;
     return FALSE;
   }
+
+  /* restore default minimum */
+  gst_base_parse_set_min_frame_size (parse, MIN_FRAME_SIZE);
 
   *framesize = bpf;
   return TRUE;
@@ -1262,4 +1270,37 @@ gst_mpeg_audio_parse_pre_push_frame (GstBaseParse * parse,
   frame->flags |= GST_BASE_PARSE_FRAME_FLAG_CLIP;
 
   return GST_FLOW_OK;
+}
+
+static GstCaps *
+gst_mpeg_audio_parse_get_sink_caps (GstBaseParse * parse)
+{
+  GstCaps *peercaps;
+  GstCaps *res;
+
+  peercaps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (parse));
+  if (peercaps) {
+    guint i, n;
+
+    /* Remove the parsed field */
+    peercaps = gst_caps_make_writable (peercaps);
+    n = gst_caps_get_size (peercaps);
+    for (i = 0; i < n; i++) {
+      GstStructure *s = gst_caps_get_structure (peercaps, i);
+
+      gst_structure_remove_field (s, "parsed");
+    }
+
+    res =
+        gst_caps_intersect_full (peercaps,
+        gst_pad_get_pad_template_caps (GST_BASE_PARSE_SRC_PAD (parse)),
+        GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (peercaps);
+  } else {
+    res =
+        gst_caps_copy (gst_pad_get_pad_template_caps (GST_BASE_PARSE_SINK_PAD
+            (parse)));
+  }
+
+  return res;
 }

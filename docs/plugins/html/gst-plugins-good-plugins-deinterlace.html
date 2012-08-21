@@ -3,12 +3,12 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <title>deinterlace</title>
-<meta name="generator" content="DocBook XSL Stylesheets V1.75.2">
+<meta name="generator" content="DocBook XSL Stylesheets V1.76.1">
 <link rel="home" href="index.html" title="GStreamer Good Plugins 0.10 Plugins Reference Manual">
 <link rel="up" href="ch01.html" title="gst-plugins-good Elements">
 <link rel="prev" href="gst-plugins-good-plugins-dcaparse.html" title="dcaparse">
 <link rel="next" href="gst-plugins-good-plugins-deinterleave.html" title="deinterleave">
-<meta name="generator" content="GTK-Doc V1.17 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.18 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -68,6 +68,9 @@ GstDeinterlace implements
   "<a class="link" href="gst-plugins-good-plugins-deinterlace.html#GstDeinterlace--method" title='The "method" property'>method</a>"                   <span class="type">GstDeinterlaceMethods</span>  : Read / Write
   "<a class="link" href="gst-plugins-good-plugins-deinterlace.html#GstDeinterlace--mode" title='The "mode" property'>mode</a>"                     <span class="type">GstDeinterlaceModes</span>   : Read / Write
   "<a class="link" href="gst-plugins-good-plugins-deinterlace.html#GstDeinterlace--tff" title='The "tff" property'>tff</a>"                      <span class="type">GstDeinterlaceFieldLayout</span>  : Read / Write
+  "<a class="link" href="gst-plugins-good-plugins-deinterlace.html#GstDeinterlace--drop-orphans" title='The "drop-orphans" property'>drop-orphans</a>"             <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a>              : Read / Write
+  "<a class="link" href="gst-plugins-good-plugins-deinterlace.html#GstDeinterlace--ignore-obscure" title='The "ignore-obscure" property'>ignore-obscure</a>"           <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a>              : Read / Write
+  "<a class="link" href="gst-plugins-good-plugins-deinterlace.html#GstDeinterlace--locking" title='The "locking" property'>locking</a>"                  <span class="type">GstDeinterlaceLocking</span>  : Read / Write
 </pre>
 </div>
 <div class="refsect1">
@@ -79,7 +82,7 @@ For this different algorithms can be selected which will be described later.
 <p>
 </p>
 <div class="refsect2">
-<a name="idp8051920"></a><h3>Example launch line</h3>
+<a name="idp11818688"></a><h3>Example launch line</h3>
 <div class="informalexample">
   <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
     <tbody>
@@ -97,7 +100,7 @@ For this different algorithms can be selected which will be described later.
 <div class="refsynopsisdiv">
 <h2>Synopsis</h2>
 <div class="refsect2">
-<a name="idp7099456"></a><h3>Element Information</h3>
+<a name="idp6113440"></a><h3>Element Information</h3>
 <div class="variablelist"><table border="0">
 <col align="left" valign="top">
 <tbody>
@@ -120,7 +123,7 @@ For this different algorithms can be selected which will be described later.
 </div>
 <hr>
 <div class="refsect2">
-<a name="idp12340128"></a><h3>Element Pads</h3>
+<a name="idp9226816"></a><h3>Element Pads</h3>
 <div class="variablelist"><table border="0">
 <col align="left" valign="top">
 <tbody>
@@ -348,10 +351,44 @@ on content that has the "interlaced" flag on the caps.
 <p>Deinterlace top field first.</p>
 <p>Default value: Auto detection</p>
 </div>
+<hr>
+<div class="refsect2">
+<a name="GstDeinterlace--drop-orphans"></a><h3>The <code class="literal">"drop-orphans"</code> property</h3>
+<pre class="programlisting">  "drop-orphans"             <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a>              : Read / Write</pre>
+<p>
+This selects whether to drop orphan fields at the beginning of telecine
+patterns in active locking mode.
+</p>
+<p>Default value: TRUE</p>
+<p class="since">Since 0.10.31</p>
+</div>
+<hr>
+<div class="refsect2">
+<a name="GstDeinterlace--ignore-obscure"></a><h3>The <code class="literal">"ignore-obscure"</code> property</h3>
+<pre class="programlisting">  "ignore-obscure"           <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gboolean"><span class="type">gboolean</span></a>              : Read / Write</pre>
+<p>
+This selects whether to ignore obscure/rare telecine patterns.
+NTSC 2:3 pulldown variants are the only really common patterns.
+</p>
+<p>Default value: TRUE</p>
+<p class="since">Since 0.10.31</p>
+</div>
+<hr>
+<div class="refsect2">
+<a name="GstDeinterlace--locking"></a><h3>The <code class="literal">"locking"</code> property</h3>
+<pre class="programlisting">  "locking"                  <span class="type">GstDeinterlaceLocking</span>  : Read / Write</pre>
+<p>
+This selects which approach to pattern locking is used which affects
+processing latency and accuracy of timestamp adjustment for telecine
+streams.
+</p>
+<p>Default value: No pattern locking</p>
+<p class="since">Since 0.10.31</p>
+</div>
 </div>
 </div>
 <div class="footer">
 <hr>
-          Generated by GTK-Doc V1.17</div>
+          Generated by GTK-Doc V1.18</div>
 </body>
 </html>

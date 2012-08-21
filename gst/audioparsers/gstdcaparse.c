@@ -62,12 +62,13 @@ static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
         " channels = (int) [ 1, 8 ],"
         " rate = (int) [ 8000, 192000 ],"
         " depth = (int) { 14, 16 },"
-        " endianness = (int) { LITTLE_ENDIAN, BIG_ENDIAN }"));
+        " endianness = (int) { LITTLE_ENDIAN, BIG_ENDIAN }, "
+        " block-size = (int) [ 1, MAX], " " frame-size = (int) [ 1, MAX]"));
 
 static GstStaticPadTemplate sink_template = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("audio/x-dts, framed = (boolean) false"));
+    GST_STATIC_CAPS ("audio/x-dts"));
 
 static void gst_dca_parse_finalize (GObject * object);
 
@@ -77,6 +78,7 @@ static gboolean gst_dca_parse_check_valid_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame, guint * size, gint * skipsize);
 static GstFlowReturn gst_dca_parse_parse_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame);
+static GstCaps *gst_dca_parse_get_sink_caps (GstBaseParse * parse);
 
 GST_BOILERPLATE (GstDcaParse, gst_dca_parse, GstBaseParse, GST_TYPE_BASE_PARSE);
 
@@ -85,10 +87,9 @@ gst_dca_parse_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &sink_template);
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_details_simple (element_class,
       "DTS Coherent Acoustics audio stream parser", "Codec/Parser/Audio",
@@ -111,6 +112,7 @@ gst_dca_parse_class_init (GstDcaParseClass * klass)
   parse_class->check_valid_frame =
       GST_DEBUG_FUNCPTR (gst_dca_parse_check_valid_frame);
   parse_class->parse_frame = GST_DEBUG_FUNCPTR (gst_dca_parse_parse_frame);
+  parse_class->get_sink_caps = GST_DEBUG_FUNCPTR (gst_dca_parse_get_sink_caps);
 }
 
 static void
@@ -448,4 +450,37 @@ broken_header:
     GST_ELEMENT_ERROR (parse, STREAM, DECODE, (NULL), (NULL));
     return GST_FLOW_ERROR;
   }
+}
+
+static GstCaps *
+gst_dca_parse_get_sink_caps (GstBaseParse * parse)
+{
+  GstCaps *peercaps;
+  GstCaps *res;
+
+  peercaps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (parse));
+  if (peercaps) {
+    guint i, n;
+
+    /* Remove the framed field */
+    peercaps = gst_caps_make_writable (peercaps);
+    n = gst_caps_get_size (peercaps);
+    for (i = 0; i < n; i++) {
+      GstStructure *s = gst_caps_get_structure (peercaps, i);
+
+      gst_structure_remove_field (s, "framed");
+    }
+
+    res =
+        gst_caps_intersect_full (peercaps,
+        gst_pad_get_pad_template_caps (GST_BASE_PARSE_SRC_PAD (parse)),
+        GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (peercaps);
+  } else {
+    res =
+        gst_caps_copy (gst_pad_get_pad_template_caps (GST_BASE_PARSE_SINK_PAD
+            (parse)));
+  }
+
+  return res;
 }

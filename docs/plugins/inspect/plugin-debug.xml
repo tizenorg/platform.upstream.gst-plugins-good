@@ -3,7 +3,7 @@
   <description>elements for testing and debugging</description>
   <filename>../../gst/debugutils/.libs/libgstdebug.so</filename>
   <basename>libgstdebug.so</basename>
-  <version>0.10.29</version>
+  <version>0.10.31</version>
   <license>LGPL</license>
   <source>gst-plugins-good</source>
   <package>GStreamer Good Plug-ins source release</package>
@@ -155,7 +155,7 @@
       <longname>Random buffer size</longname>
       <class>Testing</class>
       <description>pull random sized buffers</description>
-      <author>Stefan Kost &lt;stefan.kost@nokia.com&gt;)</author>
+      <author>Stefan Kost &lt;stefan.kost@nokia.com&gt;</author>
       <pads>
         <caps>
           <name>sink</name>

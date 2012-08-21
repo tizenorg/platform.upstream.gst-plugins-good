@@ -181,7 +181,7 @@ static GstStaticPadTemplate src_factory = GST_STATIC_PAD_TEMPLATE ("src",
 static GstStaticPadTemplate sink_factory = GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
     GST_PAD_ALWAYS,
-    GST_STATIC_CAPS ("audio/x-flac, framed = (boolean) false")
+    GST_STATIC_CAPS ("audio/x-flac")
     );
 
 static void gst_flac_parse_finalize (GObject * object);
@@ -198,6 +198,10 @@ static GstFlowReturn gst_flac_parse_parse_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame);
 static GstFlowReturn gst_flac_parse_pre_push_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame);
+static gboolean gst_flac_parse_convert (GstBaseParse * parse,
+    GstFormat src_format, gint64 src_value, GstFormat dest_format,
+    gint64 * dest_value);
+static GstCaps *gst_flac_parse_get_sink_caps (GstBaseParse * parse);
 
 GST_BOILERPLATE (GstFlacParse, gst_flac_parse, GstBaseParse,
     GST_TYPE_BASE_PARSE);
@@ -207,10 +211,8 @@ gst_flac_parse_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class, &sink_factory);
 
   gst_element_class_set_details_simple (element_class, "FLAC audio parser",
       "Codec/Parser/Audio",
@@ -244,6 +246,9 @@ gst_flac_parse_class_init (GstFlacParseClass * klass)
   baseparse_class->parse_frame = GST_DEBUG_FUNCPTR (gst_flac_parse_parse_frame);
   baseparse_class->pre_push_frame =
       GST_DEBUG_FUNCPTR (gst_flac_parse_pre_push_frame);
+  baseparse_class->convert = GST_DEBUG_FUNCPTR (gst_flac_parse_convert);
+  baseparse_class->get_sink_caps =
+      GST_DEBUG_FUNCPTR (gst_flac_parse_get_sink_caps);
 }
 
 static void
@@ -323,6 +328,7 @@ gst_flac_parse_start (GstBaseParse * parse)
   flacparse->blocking_strategy = 0;
   flacparse->block_size = 0;
   flacparse->sample_number = 0;
+  flacparse->strategy_checked = FALSE;
 
   /* "fLaC" marker */
   gst_base_parse_set_min_frame_size (GST_BASE_PARSE (flacparse), 4);
@@ -395,6 +401,8 @@ gst_flac_parse_frame_header_is_valid (GstFlacParse * flacparse,
 
   /* 0 == fixed block size, 1 == variable block size */
   blocking_strategy = gst_bit_reader_get_bits_uint8_unchecked (&reader, 1);
+  if (flacparse->force_variable_block_size)
+    blocking_strategy = 1;
 
   /* block size index, calculation of the real blocksize below */
   block_size = gst_bit_reader_get_bits_uint16_unchecked (&reader, 4);
@@ -528,6 +536,49 @@ gst_flac_parse_frame_header_is_valid (GstFlacParse * flacparse,
   if (actual_crc != expected_crc)
     goto error;
 
+  /* Sanity check sample number against blocking strategy, as it seems
+     some files claim fixed block size but supply sample numbers,
+     rather than block numbers. */
+  if (blocking_strategy == 0 && flacparse->block_size != 0) {
+    if (!flacparse->strategy_checked) {
+      if (block_size == sample_number) {
+        GST_WARNING_OBJECT (flacparse, "This file claims fixed block size, "
+            "but seems to be lying: assuming variable block size");
+        flacparse->force_variable_block_size = TRUE;
+        blocking_strategy = 1;
+      }
+      flacparse->strategy_checked = TRUE;
+    }
+  }
+
+  /* 
+     The FLAC format documentation says:
+     The "blocking strategy" bit determines how to calculate the sample number
+     of the first sample in the frame. If the bit is 0 (fixed-blocksize), the
+     frame header encodes the frame number as above, and the frame's starting
+     sample number will be the frame number times the blocksize. If it is 1
+     (variable-blocksize), the frame header encodes the frame's starting
+     sample number itself. (In the case of a fixed-blocksize stream, only the
+     last block may be shorter than the stream blocksize; its starting sample
+     number will be calculated as the frame number times the previous frame's
+     blocksize, or zero if it is the first frame). 
+
+     Therefore, when in fixed block size mode, we only update the block size
+     the first time, then reuse that block size for subsequent calls.
+     This will also fix a timestamp problem with the last block's timestamp
+     being miscalculated by scaling the block number by a "wrong" block size.
+   */
+  if (blocking_strategy == 0) {
+    if (flacparse->block_size != 0) {
+      /* after first block */
+      if (flacparse->block_size != block_size) {
+        /* TODO: can we know we're on the last frame, to avoid warning ? */
+        GST_WARNING_OBJECT (flacparse, "Block size is not constant");
+        block_size = flacparse->block_size;
+      }
+    }
+  }
+
   if (set) {
     flacparse->block_size = block_size;
     if (!flacparse->samplerate)
@@ -577,7 +628,7 @@ gst_flac_parse_frame_is_valid (GstFlacParse * flacparse,
   data = GST_BUFFER_DATA (buffer);
   size = GST_BUFFER_SIZE (buffer);
 
-  if (size <= flacparse->min_framesize)
+  if (size < flacparse->min_framesize)
     goto need_more;
 
   header_ret =
@@ -688,7 +739,6 @@ gst_flac_parse_check_valid_frame (GstBaseParse * parse,
 
       flacparse->offset = GST_BUFFER_OFFSET (buffer);
       flacparse->blocking_strategy = 0;
-      flacparse->block_size = 0;
       flacparse->sample_number = 0;
 
       GST_DEBUG_OBJECT (flacparse, "Found sync code");
@@ -756,17 +806,15 @@ gst_flac_parse_handle_streaminfo (GstFlacParse * flacparse, GstBuffer * buffer)
   if (!gst_bit_reader_get_bits_uint16 (&reader, &flacparse->min_blocksize, 16))
     goto error;
   if (flacparse->min_blocksize < 16) {
-    GST_ERROR_OBJECT (flacparse, "Invalid minimum block size: %u",
+    GST_WARNING_OBJECT (flacparse, "Invalid minimum block size: %u",
         flacparse->min_blocksize);
-    return FALSE;
   }
 
   if (!gst_bit_reader_get_bits_uint16 (&reader, &flacparse->max_blocksize, 16))
     goto error;
   if (flacparse->max_blocksize < 16) {
-    GST_ERROR_OBJECT (flacparse, "Invalid maximum block size: %u",
+    GST_WARNING_OBJECT (flacparse, "Invalid maximum block size: %u",
         flacparse->max_blocksize);
-    return FALSE;
   }
 
   if (!gst_bit_reader_get_bits_uint32 (&reader, &flacparse->min_framesize, 24))
@@ -796,10 +844,10 @@ gst_flac_parse_handle_streaminfo (GstFlacParse * flacparse, GstBuffer * buffer)
 
   if (!gst_bit_reader_get_bits_uint64 (&reader, &flacparse->total_samples, 36))
     goto error;
-  if (flacparse->total_samples)
-    gst_base_parse_set_duration (GST_BASE_PARSE (flacparse), GST_FORMAT_TIME,
-        GST_FRAMES_TO_CLOCK_TIME (flacparse->total_samples,
-            flacparse->samplerate), 0);
+  if (flacparse->total_samples) {
+    gst_base_parse_set_duration (GST_BASE_PARSE (flacparse),
+        GST_FORMAT_DEFAULT, flacparse->total_samples, 0);
+  }
 
   GST_DEBUG_OBJECT (flacparse, "STREAMINFO:\n"
       "\tmin/max blocksize: %u/%u,\n"
@@ -1332,7 +1380,6 @@ gst_flac_parse_parse_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
 
     flacparse->offset = -1;
     flacparse->blocking_strategy = 0;
-    flacparse->block_size = 0;
     flacparse->sample_number = 0;
     return GST_FLOW_OK;
   }
@@ -1352,4 +1399,69 @@ gst_flac_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
   frame->flags |= GST_BASE_PARSE_FRAME_FLAG_CLIP;
 
   return GST_FLOW_OK;
+}
+
+static gboolean
+gst_flac_parse_convert (GstBaseParse * parse,
+    GstFormat src_format, gint64 src_value, GstFormat dest_format,
+    gint64 * dest_value)
+{
+  GstFlacParse *flacparse = GST_FLAC_PARSE (parse);
+
+  if (flacparse->samplerate > 0) {
+    if (src_format == GST_FORMAT_DEFAULT && dest_format == GST_FORMAT_TIME) {
+      if (src_value != -1)
+        *dest_value =
+            gst_util_uint64_scale (src_value, GST_SECOND,
+            flacparse->samplerate);
+      else
+        *dest_value = -1;
+      return TRUE;
+    } else if (src_format == GST_FORMAT_TIME &&
+        dest_format == GST_FORMAT_DEFAULT) {
+      if (src_value != -1)
+        *dest_value =
+            gst_util_uint64_scale (src_value, flacparse->samplerate,
+            GST_SECOND);
+      else
+        *dest_value = -1;
+      return TRUE;
+    }
+  }
+
+  return GST_BASE_PARSE_CLASS (parent_class)->convert (parse, src_format,
+      src_value, dest_format, dest_value);
+}
+
+static GstCaps *
+gst_flac_parse_get_sink_caps (GstBaseParse * parse)
+{
+  GstCaps *peercaps;
+  GstCaps *res;
+
+  peercaps = gst_pad_get_allowed_caps (GST_BASE_PARSE_SRC_PAD (parse));
+  if (peercaps) {
+    guint i, n;
+
+    /* Remove the framed field */
+    peercaps = gst_caps_make_writable (peercaps);
+    n = gst_caps_get_size (peercaps);
+    for (i = 0; i < n; i++) {
+      GstStructure *s = gst_caps_get_structure (peercaps, i);
+
+      gst_structure_remove_field (s, "framed");
+    }
+
+    res =
+        gst_caps_intersect_full (peercaps,
+        gst_pad_get_pad_template_caps (GST_BASE_PARSE_SRC_PAD (parse)),
+        GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (peercaps);
+  } else {
+    res =
+        gst_caps_copy (gst_pad_get_pad_template_caps (GST_BASE_PARSE_SINK_PAD
+            (parse)));
+  }
+
+  return res;
 }

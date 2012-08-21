@@ -60,10 +60,10 @@ gst_rtp_mp2t_pay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_mp2t_pay_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_mp2t_pay_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_mp2t_pay_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_mp2t_pay_src_template);
   gst_element_class_set_details_simple (element_class,
       "RTP MPEG2 Transport Stream payloader", "Codec/Payloader/Network/RTP",
       "Payload-encodes MPEG2 TS into RTP packets (RFC 2250)",
@@ -127,6 +127,8 @@ gst_rtp_mp2t_pay_flush (GstRTPMP2TPay * rtpmp2tpay)
   GstBuffer *outbuf;
 
   avail = gst_adapter_available (rtpmp2tpay->adapter);
+  if (avail == 0)
+    return GST_FLOW_OK;
   outbuf = gst_rtp_buffer_new_allocate (avail, 0, 0);
 
   /* get payload */

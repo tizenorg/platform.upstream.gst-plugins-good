@@ -114,6 +114,8 @@
 
 #include <gst/rtp/gstrtpbuffer.h>
 
+#include <gst/glib-compat-private.h>
+
 #include "gstrtpbin-marshal.h"
 #include "gstrtpsession.h"
 #include "rtpsession.h"
@@ -373,22 +375,22 @@ gst_rtp_session_base_init (gpointer klass)
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
   /* sink pads */
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_recv_rtp_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_recv_rtcp_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_send_rtp_sink_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_recv_rtp_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_recv_rtcp_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_send_rtp_sink_template);
 
   /* src pads */
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_recv_rtp_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_sync_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_send_rtp_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&rtpsession_send_rtcp_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_recv_rtp_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_sync_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_send_rtp_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &rtpsession_send_rtcp_src_template);
 
   gst_element_class_set_details_simple (element_class, "RTP Session",
       "Filter/Network/RTP",
@@ -837,6 +839,10 @@ rtcp_thread (GstRtpSession * rtpsession)
 
   session = rtpsession->priv->session;
 
+  GST_DEBUG_OBJECT (rtpsession, "starting at %" GST_TIME_FORMAT,
+      GST_TIME_ARGS (current_time));
+  session->start_time = current_time;
+
   while (!rtpsession->priv->stop_thread) {
     GstClockReturn res;
 
@@ -904,8 +910,13 @@ start_rtcp_thread (GstRtpSession * rtpsession)
       g_thread_join (rtpsession->priv->thread);
     /* only create a new thread if the old one was stopped. Otherwise we can
      * just reuse the currently running one. */
+#if !GLIB_CHECK_VERSION (2, 31, 0)
     rtpsession->priv->thread =
         g_thread_create ((GThreadFunc) rtcp_thread, rtpsession, TRUE, &error);
+#else
+    rtpsession->priv->thread = g_thread_try_new ("rtpsession-rtcp-thread",
+        (GThreadFunc) rtcp_thread, rtpsession, &error);
+#endif
     rtpsession->priv->thread_stopped = FALSE;
   }
   GST_RTP_SESSION_UNLOCK (rtpsession);
@@ -1382,30 +1393,34 @@ gst_rtp_session_event_recv_rtp_sink (GstPad * pad, GstEvent * event)
 
 static gboolean
 gst_rtp_session_request_remote_key_unit (GstRtpSession * rtpsession,
-    guint32 ssrc, guint payload, gboolean all_headers)
+    guint32 ssrc, guint payload, gboolean all_headers, gint count)
 {
   GstCaps *caps;
-  gboolean requested = FALSE;
 
   caps = gst_rtp_session_get_caps_for_pt (rtpsession, payload);
 
   if (caps) {
     const GstStructure *s = gst_caps_get_structure (caps, 0);
     gboolean pli;
+    gboolean fir;
 
     pli = gst_structure_has_field (s, "rtcp-fb-nack-pli");
+    fir = gst_structure_has_field (s, "rtcp-fb-ccm-fir") && all_headers;
+
+    /* Google Talk uses FIR for repair, so send it even if we just want a
+     * regular PLI */
+    if (!pli &&
+        gst_structure_has_field (s, "rtcp-fb-x-gstreamer-fir-as-repair"))
+      fir = TRUE;
 
     gst_caps_unref (caps);
 
-    if (pli) {
-      rtp_session_request_key_unit (rtpsession->priv->session, ssrc);
-      rtp_session_request_early_rtcp (rtpsession->priv->session,
-          gst_clock_get_time (rtpsession->priv->sysclock), 200 * GST_MSECOND);
-      requested = TRUE;
-    }
+    if (pli || fir)
+      return rtp_session_request_key_unit (rtpsession->priv->session, ssrc,
+          gst_clock_get_time (rtpsession->priv->sysclock), fir, count);
   }
 
-  return requested;
+  return FALSE;
 }
 
 static gboolean
@@ -1431,10 +1446,13 @@ gst_rtp_session_event_recv_rtp_src (GstPad * pad, GstEvent * event)
           gst_structure_get_uint (s, "ssrc", &ssrc) &&
           gst_structure_get_uint (s, "payload", &pt)) {
         gboolean all_headers = FALSE;
+        gint count = -1;
 
         gst_structure_get_boolean (s, "all-headers", &all_headers);
+        if (gst_structure_get_int (s, "count", &count) && count < 0)
+          count += G_MAXINT;    /* Make sure count is positive if present */
         if (gst_rtp_session_request_remote_key_unit (rtpsession, ssrc, pt,
-                all_headers))
+                all_headers, count))
           forward = FALSE;
       }
       break;

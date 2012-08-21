@@ -74,6 +74,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
     );
 /* *INDENT-ON* */
 
+/* FIXME: sof-marker is for IJG libjpeg 8, should be different for 6.2 */
 static GstStaticPadTemplate gst_jpeg_dec_sink_pad_template =
 GST_STATIC_PAD_TEMPLATE ("sink",
     GST_PAD_SINK,
@@ -81,7 +82,8 @@ GST_STATIC_PAD_TEMPLATE ("sink",
     GST_STATIC_CAPS ("image/jpeg, "
         "width = (int) [ " G_STRINGIFY (MIN_WIDTH) ", " G_STRINGIFY (MAX_WIDTH)
         " ], " "height = (int) [ " G_STRINGIFY (MIN_HEIGHT) ", "
-        G_STRINGIFY (MAX_HEIGHT) " ], " "framerate = (fraction) [ 0/1, MAX ]")
+        G_STRINGIFY (MAX_HEIGHT) " ], framerate = (fraction) [ 0/1, MAX ], "
+        "sof-marker = (int) { 0, 1, 2, 5, 6, 7, 9, 10, 13, 14 }")
     );
 
 GST_DEBUG_CATEGORY_STATIC (jpeg_dec_debug);
@@ -113,6 +115,7 @@ static void gst_jpeg_dec_get_property (GObject * object, guint prop_id,
 
 static GstFlowReturn gst_jpeg_dec_chain (GstPad * pad, GstBuffer * buffer);
 static gboolean gst_jpeg_dec_setcaps (GstPad * pad, GstCaps * caps);
+static GstCaps *gst_jpeg_dec_getcaps (GstPad * pad);
 static gboolean gst_jpeg_dec_sink_event (GstPad * pad, GstEvent * event);
 static gboolean gst_jpeg_dec_src_event (GstPad * pad, GstEvent * event);
 static GstStateChangeReturn gst_jpeg_dec_change_state (GstElement * element,
@@ -164,10 +167,10 @@ gst_jpeg_dec_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_jpeg_dec_src_pad_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_jpeg_dec_sink_pad_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_jpeg_dec_src_pad_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_jpeg_dec_sink_pad_template);
   gst_element_class_set_details_simple (element_class, "JPEG image decoder",
       "Codec/Decoder/Image",
       "Decode images from JPEG format", "Wim Taymans <wim@fluendo.com>");
@@ -406,6 +409,8 @@ gst_jpeg_dec_init (GstJpegDec * dec)
   gst_element_add_pad (GST_ELEMENT (dec), dec->sinkpad);
   gst_pad_set_setcaps_function (dec->sinkpad,
       GST_DEBUG_FUNCPTR (gst_jpeg_dec_setcaps));
+  gst_pad_set_getcaps_function (dec->sinkpad,
+      GST_DEBUG_FUNCPTR (gst_jpeg_dec_getcaps));
   gst_pad_set_chain_function (dec->sinkpad,
       GST_DEBUG_FUNCPTR (gst_jpeg_dec_chain));
   gst_pad_set_event_function (dec->sinkpad,
@@ -768,6 +773,50 @@ gst_jpeg_dec_setcaps (GstPad * pad, GstCaps * caps)
 
   return TRUE;
 }
+
+static GstCaps *
+gst_jpeg_dec_getcaps (GstPad * pad)
+{
+  GstJpegDec *dec;
+  GstCaps *caps;
+  GstPad *peer;
+
+  dec = GST_JPEG_DEC (GST_OBJECT_PARENT (pad));
+
+  if (GST_PAD_CAPS (pad))
+    return gst_caps_ref (GST_PAD_CAPS (pad));
+
+  peer = gst_pad_get_peer (dec->srcpad);
+
+  if (peer) {
+    GstCaps *peer_caps;
+    const GstCaps *templ_caps;
+    GstStructure *s;
+    guint i, n;
+
+    peer_caps = gst_pad_get_caps (peer);
+
+    /* Translate peercaps to image/jpeg */
+    peer_caps = gst_caps_make_writable (peer_caps);
+    n = gst_caps_get_size (peer_caps);
+    for (i = 0; i < n; i++) {
+      s = gst_caps_get_structure (peer_caps, i);
+
+      gst_structure_set_name (s, "image/jpeg");
+    }
+
+    templ_caps = gst_pad_get_pad_template_caps (pad);
+    caps = gst_caps_intersect_full (peer_caps, templ_caps,
+        GST_CAPS_INTERSECT_FIRST);
+    gst_caps_unref (peer_caps);
+    gst_object_unref (peer);
+  } else {
+    caps = gst_caps_copy (gst_pad_get_pad_template_caps (pad));
+  }
+
+  return caps;
+}
+
 
 /* yuk */
 static void
@@ -1346,12 +1395,16 @@ again:
     GST_WARNING_OBJECT (dec, "reading the header failed, %d", hdr_ok);
   }
 
+  GST_LOG_OBJECT (dec, "num_components=%d", dec->cinfo.num_components);
+  GST_LOG_OBJECT (dec, "jpeg_color_space=%d", dec->cinfo.jpeg_color_space);
+
+  if (!dec->cinfo.num_components || !dec->cinfo.comp_info)
+    goto components_not_supported;
+
   r_h = dec->cinfo.comp_info[0].h_samp_factor;
   r_v = dec->cinfo.comp_info[0].v_samp_factor;
 
   GST_LOG_OBJECT (dec, "r_h = %d, r_v = %d", r_h, r_v);
-  GST_LOG_OBJECT (dec, "num_components=%d", dec->cinfo.num_components);
-  GST_LOG_OBJECT (dec, "jpeg_color_space=%d", dec->cinfo.jpeg_color_space);
 
   if (dec->cinfo.num_components > 3)
     goto components_not_supported;
@@ -1624,7 +1677,8 @@ drop_buffer:
 components_not_supported:
   {
     gst_jpeg_dec_set_error (dec, GST_FUNCTION, __LINE__,
-        "more components than supported: %d > 3", dec->cinfo.num_components);
+        "number of components not supported: %d (max 3)",
+        dec->cinfo.num_components);
     ret = GST_FLOW_ERROR;
     goto done;
   }

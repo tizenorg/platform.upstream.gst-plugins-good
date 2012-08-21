@@ -2,7 +2,7 @@ Source: gst-plugins-good0.10
 Section: libs
 Priority: optional
 Maintainer: Shin Seung Bae <seungbae.shin@samsung.com>, JongHyuk Choi <jhchoi.choi@samsung.com>
-Uploaders: younghwan ahn <younghwan_.an@samsung.com>, Naveen Ch <naveen.ch@samsung.com>, Wonhyung Cho <wh01.cho@samsung.com>, Heungsoon Rim <hs06.rim@samsung.com>, Prashanth Kumar D <prashanth.kd@samsung.com>, Jeongmo Yang <jm80.yang@samsung.com>
+Uploaders: younghwan ahn <younghwan_.an@samsung.com>, Naveen Ch <naveen.ch@samsung.com>, Hyunseok Lee <hs7388.lee@samsung.com>, Jeongmo Yang <jm80.yang@samsung.com>
 Build-Depends: libglib2.0-dev (>= 2.16),
                liboil0.3-dev (>= 0.3.8),
                libgstreamer0.10-dev (>= 0.10.25),

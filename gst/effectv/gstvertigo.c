@@ -289,10 +289,10 @@ gst_vertigotv_base_init (gpointer g_class)
       "A loopback alpha blending effector with rotating and scaling",
       "Wim Taymans <wim.taymans@chello.be>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_vertigotv_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_vertigotv_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_vertigotv_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_vertigotv_src_template);
 }
 
 static void
@@ -325,7 +325,4 @@ gst_vertigotv_init (GstVertigoTV * filter, GstVertigoTVClass * klass)
   filter->phase = 0.0;
   filter->phase_increment = 0.02;
   filter->zoomrate = 1.01;
-
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SRC_PAD (filter));
-  gst_pad_use_fixed_caps (GST_BASE_TRANSFORM_SINK_PAD (filter));
 }

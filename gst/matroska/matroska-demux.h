@@ -1,5 +1,6 @@
 /* GStreamer Matroska muxer/demuxer
  * (c) 2003 Ronald Bultje <rbultje@ronald.bitfreak.net>
+ * (c) 2011 Debarshi Ray <rishi@gnu.org>
  *
  * matroska-demux.h: matroska file/stream demuxer definition
  *
@@ -23,10 +24,10 @@
 #define __GST_MATROSKA_DEMUX_H__
 
 #include <gst/gst.h>
-#include <gst/base/gstadapter.h>
 
 #include "ebml-read.h"
 #include "matroska-ids.h"
+#include "matroska-read-common.h"
 
 G_BEGIN_DECLS
 
@@ -41,96 +42,55 @@ G_BEGIN_DECLS
 #define GST_IS_MATROSKA_DEMUX_CLASS(klass) \
   (G_TYPE_CHECK_CLASS_TYPE ((klass), GST_TYPE_MATROSKA_DEMUX))
 
-typedef enum {
-  GST_MATROSKA_DEMUX_STATE_START,
-  GST_MATROSKA_DEMUX_STATE_SEGMENT,
-  GST_MATROSKA_DEMUX_STATE_HEADER,
-  GST_MATROSKA_DEMUX_STATE_DATA,
-  GST_MATROSKA_DEMUX_STATE_SEEK,
-  GST_MATROSKA_DEMUX_STATE_SCANNING
-} GstMatroskaDemuxState;
-
-#define MKVDEMUX_MODIFICATION
-
 typedef struct _GstMatroskaDemux {
   GstElement              parent;
 
   /* < private > */
 
-  GstIndex                *element_index;
-  gint                     element_index_writer_id;
+  GstMatroskaReadCommon    common;
 
   /* pads */
-  GstPad                  *sinkpad;
-  GPtrArray               *src;
   GstClock                *clock;
-  guint                    num_streams;
   guint                    num_v_streams;
   guint                    num_a_streams;
   guint                    num_t_streams;
 
-  /* metadata */
-  gchar                   *muxing_app;
-  gchar                   *writing_app;
-  gint64                   created;
-
   /* state */
   gboolean                 streaming;
-  GstMatroskaDemuxState    state;
   guint                    level_up;
   guint64                  seek_block;
   gboolean                 seek_first;
 
   /* did we parse cues/tracks/segmentinfo already? */
-  gboolean                 index_parsed;
   gboolean                 tracks_parsed;
-  gboolean                 segmentinfo_parsed;
-  gboolean                 attachments_parsed;
-  GList                   *tags_parsed;
   GList                   *seek_parsed;
 
-  /* start-of-segment */
-  guint64                  ebml_segment_start;
-
-  /* a cue (index) table */
-  GArray                  *index;
   /* cluster positions (optional) */
   GArray                  *clusters;
 
-  /* timescale in the file */
-  guint64                  time_scale;
-
   /* keeping track of playback position */
-  GstSegment               segment;
   gboolean                 segment_running;
   GstClockTime             last_stop_end;
-  gint64                   duration;
+  GstClockTime             stream_start_time;
 
   GstEvent                *close_segment;
   GstEvent                *new_segment;
-  GstTagList              *global_tags;
 
-  /* pull mode caching */
-  GstBuffer *cached_buffer;
-
-  /* push and pull mode */
-  guint64                  offset;
   /* some state saving */
   GstClockTime             cluster_time;
   guint64                  cluster_offset;
   guint64                  first_cluster_offset;
   guint64                  next_cluster_offset;
 
-#ifdef MKVDEMUX_MODIFICATION
-  GstClockTime         time_position;
+#ifdef MKV_DEMUX_MODIFICATION
+  gint64                   duration; /* need to check */
+  GstClockTime time_position;
   GstMatroskaTrackContext* audio_stream;
-  gboolean 	video;
+  gboolean video;
   gboolean found_videokeyframe;
   gboolean found_audioframe;
 #endif
 
-  /* push based mode usual suspects */
-  GstAdapter              *adapter;
   /* index stuff */
   gboolean                 seekable;
   gboolean                 building_index;
@@ -142,12 +102,24 @@ typedef struct _GstMatroskaDemux {
   GArray                  *seek_index;
   gint                     seek_entry;
 
-#ifdef MKVDEMUX_MODIFICATION
-
-  GstClockTime      next_key_cluster_time;
+#ifdef MKV_DEMUX_MODIFICATION
+  GstClockTime          next_key_cluster_time;
   guint64               next_key_frame_offset;
-
+  GstClockTime          current_ts;
+  GstClockTime          current_fwd_ts;
+  GstClockTime          next_keyframe_ts;
+  GstClockTime          prev_keyframe_ts;
+  gboolean              is_eos_blockgroup;
+  gboolean              is_eos_simpleblock;
+  gint                  no_video_frame;
+  gboolean              video_keyframe_pushed;
 #endif
+
+  /* gap handling */
+  guint64                  max_gap_time;
+
+  /* for non-finalized files, with invalid segment duration */
+  gboolean                 invalid_duration;
 } GstMatroskaDemux;
 
 typedef struct _GstMatroskaDemuxClass {

@@ -3,12 +3,12 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <title>pulsesink</title>
-<meta name="generator" content="DocBook XSL Stylesheets V1.75.2">
+<meta name="generator" content="DocBook XSL Stylesheets V1.76.1">
 <link rel="home" href="index.html" title="GStreamer Good Plugins 0.10 Plugins Reference Manual">
 <link rel="up" href="ch01.html" title="gst-plugins-good Elements">
 <link rel="prev" href="gst-plugins-good-plugins-progressreport.html" title="progressreport">
 <link rel="next" href="gst-plugins-good-plugins-pulsesrc.html" title="pulsesrc">
-<meta name="generator" content="GTK-Doc V1.17 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.18 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -77,55 +77,10 @@ GstPulseSink implements
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-pulsesink.description"></a><h2>Description</h2>
-<p>
-This element outputs audio to a
-<a class="ulink" href="" target="_top">PulseAudio sound server</a>.
-</p>
-<p>
-</p>
-<div class="refsect2">
-<a name="idp19660528"></a><h3>Example pipelines</h3>
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch <span class="gtkdoc opt">-</span>v filesrc location<span class="gtkdoc opt">=</span>sine<span class="gtkdoc opt">.</span>ogg <span class="gtkdoc opt">!</span> oggdemux <span class="gtkdoc opt">!</span> vorbisdec <span class="gtkdoc opt">!</span> audioconvert <span class="gtkdoc opt">!</span> audioresample <span class="gtkdoc opt">!</span> pulsesink</pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- Play an Ogg/Vorbis file.
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch <span class="gtkdoc opt">-</span>v audiotestsrc <span class="gtkdoc opt">!</span> audioconvert <span class="gtkdoc opt">!</span> volume volume<span class="gtkdoc opt">=</span><span class="number">0.4</span> <span class="gtkdoc opt">!</span> pulsesink</pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- Play a 440Hz sine wave.
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch <span class="gtkdoc opt">-</span>v audiotestsrc <span class="gtkdoc opt">!</span> pulsesink stream<span class="gtkdoc opt">-</span>properties<span class="gtkdoc opt">=</span><span class="string">&quot;props,media.title=test&quot;</span></pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- Play a sine wave and set a stream property. The property can be checked
-with "pactl list".
-</div>
-<p>
-</p>
 <div class="refsynopsisdiv">
 <h2>Synopsis</h2>
 <div class="refsect2">
-<a name="idp17451952"></a><h3>Element Information</h3>
+<a name="idp11610048"></a><h3>Element Information</h3>
 <div class="variablelist"><table border="0">
 <col align="left" valign="top">
 <tbody>
@@ -148,7 +103,7 @@ with "pactl list".
 </div>
 <hr>
 <div class="refsect2">
-<a name="idp17326288"></a><h3>Element Pads</h3>
+<a name="idp18308432"></a><h3>Element Pads</h3>
 <div class="variablelist"><table border="0">
 <col align="left" valign="top">
 <tbody>
@@ -178,14 +133,6 @@ with "pactl list".
 </tr>
 <tr>
 <td><p><span class="term"></span></p></td>
-<td> audio/x-raw-int, endianness=(int){ 1234, 4321 }, signed=(boolean)true, width=(int)24, depth=(int)24, rate=(int)[ 1, 2147483647 ], channels=(int)[ 1, 32 ]</td>
-</tr>
-<tr>
-<td><p><span class="term"></span></p></td>
-<td> audio/x-raw-int, endianness=(int){ 1234, 4321 }, signed=(boolean)true, width=(int)32, depth=(int)24, rate=(int)[ 1, 2147483647 ], channels=(int)[ 1, 32 ]</td>
-</tr>
-<tr>
-<td><p><span class="term"></span></p></td>
 <td> audio/x-raw-int, signed=(boolean)false, width=(int)8, depth=(int)8, rate=(int)[ 1, 2147483647 ], channels=(int)[ 1, 32 ]</td>
 </tr>
 <tr>
@@ -195,6 +142,30 @@ with "pactl list".
 <tr>
 <td><p><span class="term"></span></p></td>
 <td> audio/x-mulaw, rate=(int)[ 1, 2147483647 ], channels=(int)[ 1, 32 ]</td>
+</tr>
+<tr>
+<td><p><span class="term"></span></p></td>
+<td> audio/x-raw-int, endianness=(int){ 1234, 4321 }, signed=(boolean)true, width=(int)24, depth=(int)24, rate=(int)[ 1, 2147483647 ], channels=(int)[ 1, 32 ]</td>
+</tr>
+<tr>
+<td><p><span class="term"></span></p></td>
+<td> audio/x-raw-int, endianness=(int){ 1234, 4321 }, signed=(boolean)true, width=(int)32, depth=(int)24, rate=(int)[ 1, 2147483647 ], channels=(int)[ 1, 32 ]</td>
+</tr>
+<tr>
+<td><p><span class="term"></span></p></td>
+<td> audio/x-ac3, framed=(boolean)true</td>
+</tr>
+<tr>
+<td><p><span class="term"></span></p></td>
+<td> audio/x-eac3, framed=(boolean)true</td>
+</tr>
+<tr>
+<td><p><span class="term"></span></p></td>
+<td> audio/x-dts, framed=(boolean)true, block-size=(int){ 512, 1024, 2048 }</td>
+</tr>
+<tr>
+<td><p><span class="term"></span></p></td>
+<td> audio/mpeg, mpegversion=(int)1, mpegaudioversion=(int)[ 1, 2 ], parsed=(boolean)true</td>
 </tr>
 </tbody>
 </table></div>
@@ -253,52 +224,19 @@ with "pactl list".
 <div class="refsect2">
 <a name="GstPulseSink--client"></a><h3>The <code class="literal">"client"</code> property</h3>
 <pre class="programlisting">  "client"                   <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gchar"><span class="type">gchar</span></a>*                : Read / Write</pre>
-<p>
-The PulseAudio client name to use.
-</p>
-<p>Default value: "&lt;unknown&gt;"</p>
-<p class="since">Since 0.10.27</p>
+<p>The PulseAudio client name to use.</p>
+<p>Default value: "lt-gst-plugins-good-plugins-scan"</p>
 </div>
 <hr>
 <div class="refsect2">
 <a name="GstPulseSink--stream-properties"></a><h3>The <code class="literal">"stream-properties"</code> property</h3>
 <pre class="programlisting">  "stream-properties"        <a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gstreamer/html/gstreamer-GstStructure.html#GstStructure"><span class="type">GstStructure</span></a>*         : Read / Write</pre>
-<p>
-List of pulseaudio stream properties. A list of defined properties can be
-found in the <a class="ulink" href="http://0pointer.de/lennart/projects/pulseaudio/doxygen/proplist_8h.html" target="_top">pulseaudio api docs</a>.
-</p>
-<p>
-Below is an example for registering as a music application to pulseaudio.
-</p>
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1
-2
-3
-4</pre></td>
-        <td class="listing_code"><pre class="programlisting">GstStructure <span class="gtkdoc opt">*</span>props<span class="gtkdoc opt">;</span>
-props <span class="gtkdoc opt">=</span> <span class="function"><a href="http://gstreamer.freedesktop.org/data/doc/gstreamer/head/gstreamer/html/gstreamer-GstStructure.html#gst-structure-from-string">gst_structure_from_string</a></span> <span class="gtkdoc opt">(</span><span class="string">&quot;props,media.role=music&quot;</span><span class="gtkdoc opt">,</span> NULL<span class="gtkdoc opt">);</span>
-<span class="function"><a href="http://library.gnome.org/devel/gobject/unstable/gobject-The-Base-Object-Type.html#g-object-set">g_object_set</a></span> <span class="gtkdoc opt">(</span>pulse<span class="gtkdoc opt">,</span> <span class="string">&quot;stream-properties&quot;</span><span class="gtkdoc opt">,</span> props<span class="gtkdoc opt">,</span> NULL<span class="gtkdoc opt">);</span>
-gst_structure_free</pre></td>
-      </tr>
-    </tbody>
-  </table>
+<p>list of pulseaudio stream properties.</p>
 </div>
-
-<p>
-</p>
-<p class="since">Since 0.10.26</p>
-</div>
-</div>
-<div class="refsect1">
-<a name="gst-plugins-good-plugins-pulsesink.see-also"></a><h2>See Also</h2>
-pulsesrc, pulsemixer
 </div>
 </div>
 <div class="footer">
 <hr>
-          Generated by GTK-Doc V1.17</div>
+          Generated by GTK-Doc V1.18</div>
 </body>
 </html>

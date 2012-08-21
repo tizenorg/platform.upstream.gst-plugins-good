@@ -74,11 +74,14 @@ struct _GstFlacParse {
   guint8 blocking_strategy;
   guint16 block_size;
   guint64 sample_number;
+  gboolean strategy_checked;
 
   GstTagList *tags;
 
   GList *headers;
   GstBuffer *seektable;
+
+  gboolean force_variable_block_size;
 };
 
 struct _GstFlacParseClass {

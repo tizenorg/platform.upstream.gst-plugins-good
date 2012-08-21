@@ -68,10 +68,10 @@ gst_navseek_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&navseek_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&navseek_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &navseek_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &navseek_src_template);
 
   gst_element_class_set_details_simple (element_class,
       "Seek based on left-right arrows", "Filter/Video",
@@ -211,6 +211,23 @@ gst_navseek_segseek (GstNavSeek * navseek)
   gst_object_unref (peer_pad);
 }
 
+static void
+gst_navseek_toggle_play_pause (GstNavSeek * navseek)
+{
+  GstStateChangeReturn sret;
+  GstState current, pending, state;
+
+  sret = gst_element_get_state (GST_ELEMENT (navseek), &current, &pending, 0);
+  if (sret == GST_STATE_CHANGE_FAILURE)
+    return;
+
+  state = (pending != GST_STATE_VOID_PENDING) ? pending : current;
+
+  gst_element_post_message (GST_ELEMENT (navseek),
+      gst_message_new_request_state (GST_OBJECT (navseek),
+          (state == GST_STATE_PLAYING) ? GST_STATE_PAUSED : GST_STATE_PLAYING));
+}
+
 static gboolean
 gst_navseek_handle_src_event (GstPad * pad, GstEvent * event)
 {
@@ -263,6 +280,8 @@ gst_navseek_handle_src_event (GstPad * pad, GstEvent * event)
         } else if (strcmp (key, "n") == 0) {
           /* normal speed */
           gst_navseek_change_playback_rate (navseek, 1.0);
+        } else if (strcmp (key, "space") == 0) {
+          gst_navseek_toggle_play_pause (navseek);
         }
       } else {
         break;

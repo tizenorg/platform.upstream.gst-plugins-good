@@ -66,6 +66,8 @@
 
 #include <gst/controller/gstcontroller.h>
 
+#include "gst/glib-compat-private.h"
+
 GST_DEBUG_CATEGORY_STATIC (videobox_debug);
 #define GST_CAT_DEFAULT videobox_debug
 
@@ -2466,10 +2468,10 @@ gst_video_box_base_init (gpointer g_class)
       "Resizes a video by adding borders or cropping",
       "Wim Taymans <wim@fluendo.com>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_video_box_sink_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_video_box_src_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_video_box_sink_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_video_box_src_template);
 }
 
 static void
@@ -3272,8 +3274,8 @@ static void
 gst_video_box_process (GstVideoBox * video_box, const guint8 * src,
     guint8 * dest)
 {
-  guint b_alpha = CLAMP (video_box->border_alpha * 256, 0, 256);
-  guint i_alpha = CLAMP (video_box->alpha * 256, 0, 256);
+  guint b_alpha = CLAMP (video_box->border_alpha * 256, 0, 255);
+  guint i_alpha = CLAMP (video_box->alpha * 256, 0, 255);
   GstVideoBoxFill fill_type = video_box->fill_type;
   gint br, bl, bt, bb, crop_w, crop_h;
 

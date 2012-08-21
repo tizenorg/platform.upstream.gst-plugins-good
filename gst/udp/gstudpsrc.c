@@ -218,8 +218,7 @@ gst_udpsrc_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_template));
+  gst_element_class_add_static_pad_template (element_class, &src_template);
 
   gst_element_class_set_details_simple (element_class, "UDP packet receiver",
       "Source/Network",
@@ -484,12 +483,21 @@ retry:
               IOCTL_SOCKET (udpsrc->sock.fd, FIONREAD, &readsize)) < 0))
     goto ioctl_failed;
 
-  /* if we get here and there is nothing to read from the socket, the select got
-   * woken up by activity on the socket but it was not a read. We know someone
-   * will also do something with the socket so that we don't go into an infinite
-   * loop in the select(). */
+  /* If we get here and the readsize is zero, then either select was woken up
+   * by activity that is not a read, or a poll error occurred, or a UDP packet
+   * was received that has no data. Since we cannot identify which case it is,
+   * we handle all of them. This could possibly lead to a UDP packet getting
+   * lost, but since UDP is not reliable, we can accept this. */
   if (G_UNLIKELY (!readsize)) {
+    /* try to read a packet (and it will be ignored),
+     * in case a packet with no data arrived */
+    slen = sizeof (sa);
+    recvfrom (udpsrc->sock.fd, (char *) &slen, 0, 0, &sa.sa, &slen);
+
+    /* clear any error, in case a poll error occurred */
     clear_error (udpsrc);
+
+    /* poll again */
     goto retry;
   }
 
@@ -533,7 +541,7 @@ no_select:
 
   /* patch pktdata and len when stripping off the headers */
   if (G_UNLIKELY (udpsrc->skip_first_bytes != 0)) {
-    if (G_UNLIKELY (readsize <= udpsrc->skip_first_bytes))
+    if (G_UNLIKELY (readsize < udpsrc->skip_first_bytes))
       goto skip_error;
 
     pktdata += udpsrc->skip_first_bytes;

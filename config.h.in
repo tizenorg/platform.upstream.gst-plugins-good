@@ -272,23 +272,11 @@
 /* Define to enable pulseaudio plug-in (used by pulseaudio). */
 #undef HAVE_PULSE
 
-/* defined if pulseaudio >= 0.9.11 is available */
-#undef HAVE_PULSE_0_9_11
-
-/* defined if pulseaudio >= 0.9.12 is available */
-#undef HAVE_PULSE_0_9_12
-
-/* defined if pulseaudio >= 0.9.13 is available */
-#undef HAVE_PULSE_0_9_13
-
-/* defined if pulseaudio >= 0.9.15 is available */
-#undef HAVE_PULSE_0_9_15
-
-/* defined if pulseaudio >= 0.9.16 is available */
-#undef HAVE_PULSE_0_9_16
-
 /* defined if pulseaudio >= 0.9.20 is available */
 #undef HAVE_PULSE_0_9_20
+
+/* defined if pulseaudio >= 1.0 is available */
+#undef HAVE_PULSE_1_0
 
 /* Define if RDTSC is available */
 #undef HAVE_RDTSC
@@ -365,7 +353,7 @@
 /* Define to enable X11 XVideo extensions. */
 #undef HAVE_XVIDEO
 
-/* Define to enable zlib support for id3demux/qtdemux/matroska. */
+/* Define to enable zlib support for qtdemux/matroska. */
 #undef HAVE_ZLIB
 
 /* the host CPU */

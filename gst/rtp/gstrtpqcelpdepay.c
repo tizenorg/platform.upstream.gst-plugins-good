@@ -85,10 +85,10 @@ gst_rtp_qcelp_depay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_qcelp_depay_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_qcelp_depay_sink_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_qcelp_depay_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_qcelp_depay_sink_template);
 
   gst_element_class_set_details_simple (element_class, "RTP QCELP depayloader",
       "Codec/Depayloader/Network/RTP",
@@ -164,7 +164,7 @@ static const gint frame_size[16] = {
 static gint
 get_frame_len (GstRtpQCELPDepay * depay, guint8 frame_type)
 {
-  if (frame_type > 16)
+  if (frame_type >= G_N_ELEMENTS (frame_size))
     return 0;
 
   return frame_size[frame_type];

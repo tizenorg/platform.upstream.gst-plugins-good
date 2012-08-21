@@ -28,11 +28,9 @@
 #include "gst/riff/riff-read.h"
 #include <gst/base/gstadapter.h>
 
+#ifdef DIVX_DRM /* need to check using same define */
 #include <stdint.h>
-
-
-
-
+#endif
 
 G_BEGIN_DECLS
 
@@ -64,6 +62,19 @@ typedef struct {
   guint64        total;   /* total bytes before */
 } GstAviIndexEntry;
 
+#ifdef AVIDEMUX_MODIFICATION
+typedef struct _TrickPlayInfo TrickPlayInfo;
+
+struct _TrickPlayInfo {
+
+	gint32 next_kidx;  // next Key index
+	gint32 prev_kidx; // Previous key index
+	guint64 kidxs_dur_diff; // duration between two consecutive key frames
+	gint32 show_samples; //  samples to show between two consecutive key frames
+	guint64 start_pos; /* trickplay start position */
+};
+#endif
+
 typedef struct {
   /* index of this streamcontext */
   guint          num;
@@ -89,14 +100,7 @@ typedef struct {
   guint          stop_entry;
 
 #ifdef AVIDEMUX_MODIFICATION
-  /* for  0<rate<64 */
-  gint32 next_kindex;
-  guint32 prev_kindex;
-  guint32 total_samples_bet_2_keyframes;
-  GstClockTime avg_duration_bet_2_keyframes;
-  GstClockTime start_timestamp;
-  guint32 samples_to_show_bet_kframes;
-  	guint32 audio_frame_count;
+  TrickPlayInfo *trickplay_info;
 #endif
 
   /* current index entry */

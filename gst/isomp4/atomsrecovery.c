@@ -117,8 +117,10 @@ atoms_recov_write_ftyp_info (FILE * f, AtomFTYP * ftyp, GstBuffer * prefix)
     return FALSE;
   }
   if (fwrite (data, 1, offset, f) != offset) {
+    g_free (data);
     return FALSE;
   }
+  g_free (data);
   return TRUE;
 }
 
@@ -676,6 +678,13 @@ moov_recov_file_create (FILE * file, GError ** err)
   if (!moov_recov_parse_num_traks (moovrf)) {
     g_set_error (err, ATOMS_RECOV_QUARK, ATOMS_RECOV_ERR_PARSING,
         "Error while parsing parsing number of traks");
+    goto fail;
+  }
+
+  /* sanity check */
+  if (moovrf->num_traks > 1024) {
+    g_set_error (err, ATOMS_RECOV_QUARK, ATOMS_RECOV_ERR_PARSING,
+        "Unsupported number of traks");
     goto fail;
   }
 

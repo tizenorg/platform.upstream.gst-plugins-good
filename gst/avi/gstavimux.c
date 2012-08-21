@@ -142,9 +142,6 @@ static GstStaticPadTemplate video_sink_factory =
         "video/x-huffyuv, "
         "width = (int) [ 16, 4096 ], "
         "height = (int) [ 16, 4096 ], " "framerate = (fraction) [ 0, MAX ];"
-        "video/x-dirac, "
-        "width = (int) [ 16, 4096 ], "
-        "height = (int) [ 16, 4096 ], " "framerate = (fraction) [ 0, MAX ];"
         "video/x-wmv, "
         "width = (int) [ 16, 4096 ], "
         "height = (int) [ 16, 4096 ], " "framerate = (fraction) [ 0, MAX ], "
@@ -249,12 +246,11 @@ gst_avi_mux_base_init (gpointer g_class)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (g_class);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&src_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&audio_sink_factory));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&video_sink_factory));
+  gst_element_class_add_static_pad_template (element_class, &src_factory);
+  gst_element_class_add_static_pad_template (element_class,
+      &audio_sink_factory);
+  gst_element_class_add_static_pad_template (element_class,
+      &video_sink_factory);
 
   gst_element_class_set_details_simple (element_class, "Avi muxer",
       "Codec/Muxer",
@@ -600,8 +596,6 @@ gst_avi_mux_vidsink_set_caps (GstPad * pad, GstCaps * vscaps)
           avipad->vids.compression = GST_MAKE_FOURCC ('M', 'P', 'E', 'G');
           break;
       }
-    } else if (!strcmp (mimetype, "video/x-dirac")) {
-      avipad->vids.compression = GST_MAKE_FOURCC ('d', 'r', 'a', 'c');
     } else if (!strcmp (mimetype, "video/x-wmv")) {
       gint wmvversion;
 

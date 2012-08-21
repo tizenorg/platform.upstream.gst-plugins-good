@@ -1401,9 +1401,9 @@ gst_multi_file_src_get_type
 <FILE>element-multifilesink</FILE>
 <TITLE>multifilesink</TITLE>
 GstMultiFileSink
+GstMultiFileSinkNext
 <SUBSECTION Standard>
 GstMultiFileSinkClass
-GstMultiFileSinkNext
 GST_MULTI_FILE_SINK
 GST_MULTI_FILE_SINK_CLASS
 GST_IS_MULTI_FILE_SINK
@@ -1979,6 +1979,20 @@ GST_SPEEX_ENC_CLASS
 GST_IS_SPEEX_ENC
 GST_IS_SPEEX_ENC_CLASS
 gst_speex_enc_get_type
+</SECTION>
+
+<SECTION>
+<FILE>element-splitfilesrc</FILE>
+<TITLE>splitfilesrc</TITLE>
+GstSplitFileSrc
+<SUBSECTION Standard>
+GstSplitFileSrcClass
+GST_SPLIT_FILE_SRC
+GST_SPLIT_FILE_SRC_CLASS
+GST_IS_SPLIT_FILE_SRC
+GST_IS_SPLIT_FILE_SRC_CLASS
+GST_TYPE_SPLIT_FILE_SRC
+gst_split_file_src_get_type
 </SECTION>
 
 <SECTION>

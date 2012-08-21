@@ -3,12 +3,12 @@
 <head>
 <meta http-equiv="Content-Type" content="text/html; charset=UTF-8">
 <title>v4l2src</title>
-<meta name="generator" content="DocBook XSL Stylesheets V1.75.2">
+<meta name="generator" content="DocBook XSL Stylesheets V1.76.1">
 <link rel="home" href="index.html" title="GStreamer Good Plugins 0.10 Plugins Reference Manual">
 <link rel="up" href="ch01.html" title="gst-plugins-good Elements">
 <link rel="prev" href="gst-plugins-good-plugins-udpsink.html" title="udpsink">
 <link rel="next" href="gst-plugins-good-plugins-v4l2sink.html" title="v4l2sink">
-<meta name="generator" content="GTK-Doc V1.17 (XML mode)">
+<meta name="generator" content="GTK-Doc V1.18 (XML mode)">
 <link rel="stylesheet" href="style.css" type="text/css">
 </head>
 <body bgcolor="white" text="black" link="#0000FF" vlink="#840084" alink="#0000FF">
@@ -77,49 +77,15 @@ GstV4l2Src implements
   "<a class="link" href="gst-plugins-good-plugins-v4l2src.html#GstV4l2Src--decimate" title='The "decimate" property'>decimate</a>"                 <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write
   "<a class="link" href="gst-plugins-good-plugins-v4l2src.html#GstV4l2Src--hue" title='The "hue" property'>hue</a>"                      <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write
   "<a class="link" href="gst-plugins-good-plugins-v4l2src.html#GstV4l2Src--saturation" title='The "saturation" property'>saturation</a>"               <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write
+  "<a class="link" href="gst-plugins-good-plugins-v4l2src.html#GstV4l2Src--norm" title='The "norm" property'>norm</a>"                     <span class="type">V4L2_TV_norms</span>         : Read / Write
 </pre>
 </div>
 <div class="refsect1">
 <a name="gst-plugins-good-plugins-v4l2src.description"></a><h2>Description</h2>
-<p>
-v4l2src can be used to capture video from v4l2 devices, like webcams and tv
-cards.
-</p>
-<p>
-</p>
-<div class="refsect2">
-<a name="idp22122928"></a><h3>Example launch lines</h3>
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch v4l2src <span class="gtkdoc opt">!</span> xvimagesink</pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- This pipeline shows the video captured from /dev/video0 tv card and for
-webcams.
-<div class="informalexample">
-  <table class="listing_frame" border="0" cellpadding="0" cellspacing="0">
-    <tbody>
-      <tr>
-        <td class="listing_lines" align="right"><pre>1</pre></td>
-        <td class="listing_code"><pre class="programlisting">gst<span class="gtkdoc opt">-</span>launch v4l2src <span class="gtkdoc opt">!</span> jpegdec <span class="gtkdoc opt">!</span> xvimagesink</pre></td>
-      </tr>
-    </tbody>
-  </table>
-</div>
- This pipeline shows the video captured from a webcam that delivers jpeg
-images.
-</div>
-<p>
-</p>
 <div class="refsynopsisdiv">
 <h2>Synopsis</h2>
 <div class="refsect2">
-<a name="idp19842224"></a><h3>Element Information</h3>
+<a name="idp22038080"></a><h3>Element Information</h3>
 <div class="variablelist"><table border="0">
 <col align="left" valign="top">
 <tbody>
@@ -142,7 +108,7 @@ images.
 </div>
 <hr>
 <div class="refsect2">
-<a name="idp19207776"></a><h3>Element Pads</h3>
+<a name="idp21731728"></a><h3>Element Pads</h3>
 <div class="variablelist"><table border="0">
 <col align="left" valign="top">
 <tbody>
@@ -295,7 +261,6 @@ images.
 <a name="GstV4l2Src-struct"></a><h3>struct GstV4l2Src</h3>
 <pre class="programlisting">struct GstV4l2Src;</pre>
 <p>
-Opaque object.
 </p>
 </div>
 </div>
@@ -347,57 +312,49 @@ Opaque object.
 <div class="refsect2">
 <a name="GstV4l2Src--brightness"></a><h3>The <code class="literal">"brightness"</code> property</h3>
 <pre class="programlisting">  "brightness"               <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write</pre>
-<p>
-Picture brightness, or more precisely, the black level
-</p>
+<p>Picture brightness, or more precisely, the black level.</p>
 <p>Default value: 0</p>
-<p class="since">Since 0.10.26</p>
 </div>
 <hr>
 <div class="refsect2">
 <a name="GstV4l2Src--contrast"></a><h3>The <code class="literal">"contrast"</code> property</h3>
 <pre class="programlisting">  "contrast"                 <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write</pre>
-<p>
-Picture contrast or luma gain
-</p>
+<p>Picture contrast or luma gain.</p>
 <p>Default value: 0</p>
-<p class="since">Since 0.10.26</p>
 </div>
 <hr>
 <div class="refsect2">
 <a name="GstV4l2Src--decimate"></a><h3>The <code class="literal">"decimate"</code> property</h3>
 <pre class="programlisting">  "decimate"                 <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write</pre>
-<p>
-Only use every nth frame
-</p>
+<p>Only use every nth frame.</p>
 <p>Allowed values: &gt;= 1</p>
 <p>Default value: 1</p>
-<p class="since">Since 0.10.26</p>
 </div>
 <hr>
 <div class="refsect2">
 <a name="GstV4l2Src--hue"></a><h3>The <code class="literal">"hue"</code> property</h3>
 <pre class="programlisting">  "hue"                      <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write</pre>
-<p>
-Hue or color balance
-</p>
+<p>Hue or color balance.</p>
 <p>Default value: 0</p>
-<p class="since">Since 0.10.26</p>
 </div>
 <hr>
 <div class="refsect2">
 <a name="GstV4l2Src--saturation"></a><h3>The <code class="literal">"saturation"</code> property</h3>
 <pre class="programlisting">  "saturation"               <a href="http://library.gnome.org/devel/glib/unstable/glib-Basic-Types.html#gint"><span class="type">gint</span></a>                  : Read / Write</pre>
-<p>
-Picture color saturation or chroma gain
-</p>
+<p>Picture color saturation or chroma gain.</p>
 <p>Default value: 0</p>
-<p class="since">Since 0.10.26</p>
+</div>
+<hr>
+<div class="refsect2">
+<a name="GstV4l2Src--norm"></a><h3>The <code class="literal">"norm"</code> property</h3>
+<pre class="programlisting">  "norm"                     <span class="type">V4L2_TV_norms</span>         : Read / Write</pre>
+<p>video standard.</p>
+<p>Default value: none</p>
 </div>
 </div>
 </div>
 <div class="footer">
 <hr>
-          Generated by GTK-Doc V1.17</div>
+          Generated by GTK-Doc V1.18</div>
 </body>
 </html>

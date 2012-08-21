@@ -56,7 +56,7 @@ GST_DEBUG_CATEGORY_EXTERN (v4l2_debug);
 #define DEFAULT_PROP_DEVICE_NAME 	NULL
 #define DEFAULT_PROP_DEVICE_FD          -1
 #define DEFAULT_PROP_FLAGS              0
-#define DEFAULT_PROP_NORM               NULL
+#define DEFAULT_PROP_TV_NORM            0
 #define DEFAULT_PROP_CHANNEL            NULL
 #define DEFAULT_PROP_FREQUENCY          0
 
@@ -66,6 +66,8 @@ enum
   V4L2_STD_OBJECT_PROPS,
 };
 
+G_LOCK_DEFINE_STATIC (probe_lock);
+
 const GList *
 gst_v4l2_probe_get_properties (GstPropertyProbe * probe)
 {
@@ -74,13 +76,13 @@ gst_v4l2_probe_get_properties (GstPropertyProbe * probe)
 
   /* well, not perfect, but better than no locking at all.
    * In the worst case we leak a list node, so who cares? */
-  GST_CLASS_LOCK (GST_OBJECT_CLASS (klass));
+  G_LOCK (probe_lock);
 
   if (!list) {
     list = g_list_append (NULL, g_object_class_find_property (klass, "device"));
   }
 
-  GST_CLASS_UNLOCK (GST_OBJECT_CLASS (klass));
+  G_UNLOCK (probe_lock);
 
   return list;
 }
@@ -316,6 +318,58 @@ gst_v4l2_device_get_type (void)
   return v4l2_device_type;
 }
 
+#define GST_TYPE_V4L2_TV_NORM (gst_v4l2_tv_norm_get_type ())
+static GType
+gst_v4l2_tv_norm_get_type (void)
+{
+  static GType v4l2_tv_norm = 0;
+
+  if (!v4l2_tv_norm) {
+    static const GEnumValue tv_norms[] = {
+      {0, "none", "none"},
+
+      {V4L2_STD_NTSC, "NTSC", "NTSC"},
+      {V4L2_STD_NTSC_M, "NTSC-M", "NTSC-M"},
+      {V4L2_STD_NTSC_M_JP, "NTSC-M-JP", "NTSC-M-JP"},
+      {V4L2_STD_NTSC_M_KR, "NTSC-M-KR", "NTSC-M-KR"},
+      {V4L2_STD_NTSC_443, "NTSC-443", "NTSC-443"},
+
+      {V4L2_STD_PAL, "PAL", "PAL"},
+      {V4L2_STD_PAL_BG, "PAL-BG", "PAL-BG"},
+      {V4L2_STD_PAL_B, "PAL-B", "PAL-B"},
+      {V4L2_STD_PAL_B1, "PAL-B1", "PAL-B1"},
+      {V4L2_STD_PAL_G, "PAL-G", "PAL-G"},
+      {V4L2_STD_PAL_H, "PAL-H", "PAL-H"},
+      {V4L2_STD_PAL_I, "PAL-I", "PAL-I"},
+      {V4L2_STD_PAL_DK, "PAL-DK", "PAL-DK"},
+      {V4L2_STD_PAL_D, "PAL-D", "PAL-D"},
+      {V4L2_STD_PAL_D1, "PAL-D1", "PAL-D1"},
+      {V4L2_STD_PAL_K, "PAL-K", "PAL-K"},
+      {V4L2_STD_PAL_M, "PAL-M", "PAL-M"},
+      {V4L2_STD_PAL_N, "PAL-N", "PAL-N"},
+      {V4L2_STD_PAL_Nc, "PAL-Nc", "PAL-Nc"},
+      {V4L2_STD_PAL_60, "PAL-60", "PAL-60"},
+
+      {V4L2_STD_SECAM, "SECAM", "SECAM"},
+      {V4L2_STD_SECAM_B, "SECAM-B", "SECAM-B"},
+      {V4L2_STD_SECAM_G, "SECAM-G", "SECAM-G"},
+      {V4L2_STD_SECAM_H, "SECAM-H", "SECAM-H"},
+      {V4L2_STD_SECAM_DK, "SECAM-DK", "SECAM-DK"},
+      {V4L2_STD_SECAM_D, "SECAM-D", "SECAM-D"},
+      {V4L2_STD_SECAM_K, "SECAM-K", "SECAM-K"},
+      {V4L2_STD_SECAM_K1, "SECAM-K1", "SECAM-K1"},
+      {V4L2_STD_SECAM_L, "SECAM-L", "SECAM-L"},
+      {V4L2_STD_SECAM_LC, "SECAM-Lc", "SECAM-Lc"},
+
+      {0, NULL, NULL}
+    };
+
+    v4l2_tv_norm = g_enum_register_static ("V4L2_TV_norms", tv_norms);
+  }
+
+  return v4l2_tv_norm;
+}
+
 void
 gst_v4l2_object_install_properties_helper (GObjectClass * gobject_class,
     const char *default_device)
@@ -384,6 +438,19 @@ gst_v4l2_object_install_properties_helper (GObjectClass * gobject_class,
           "Hue or color balance", G_MININT,
           G_MAXINT, 0,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | GST_PARAM_CONTROLLABLE));
+
+  /**
+   * GstV4l2Src:norm
+   *
+   * TV norm
+   *
+   * Since: 0.10.31
+   */
+  g_object_class_install_property (gobject_class, PROP_TV_NORM,
+      g_param_spec_enum ("norm", "TV norm",
+          "video standard",
+          GST_TYPE_V4L2_TV_NORM, DEFAULT_PROP_TV_NORM,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 }
 
 GstV4l2Object *
@@ -439,9 +506,6 @@ gst_v4l2_object_destroy (GstV4l2Object * v4l2object)
 
   if (v4l2object->channel)
     g_free (v4l2object->channel);
-
-  if (v4l2object->norm)
-    g_free (v4l2object->norm);
 
   if (v4l2object->formats) {
     gst_v4l2_object_clear_format_list (v4l2object);
@@ -510,23 +574,10 @@ gst_v4l2_object_set_property_helper (GstV4l2Object * v4l2object,
       return TRUE;
     }
       break;
-#if 0
-    case PROP_NORM:
-      if (GST_V4L2_IS_OPEN (v4l2object)) {
-        GstTuner *tuner = GST_TUNER (v4l2object->element);
-        GstTunerNorm *norm = gst_tuner_find_norm_by_name (tuner,
-            (gchar *) g_value_get_string (value));
-
-        if (norm) {
-          /* like gst_tuner_set_norm (tuner, norm)
-             without g_object_notify */
-          gst_v4l2_tuner_set_norm (v4l2object, norm);
-        }
-      } else {
-        g_free (v4l2object->norm);
-        v4l2object->norm = g_value_dup_string (value);
-      }
+    case PROP_TV_NORM:
+      v4l2object->tv_norm = g_value_get_enum (value);
       break;
+#if 0
     case PROP_CHANNEL:
       if (GST_V4L2_IS_OPEN (v4l2object)) {
         GstTuner *tuner = GST_TUNER (v4l2object->element);
@@ -631,6 +682,9 @@ gst_v4l2_object_get_property_helper (GstV4l2Object * v4l2object,
       return TRUE;
     }
       break;
+    case PROP_TV_NORM:
+      g_value_set_enum (value, v4l2object->tv_norm);
+      break;
     default:
       return FALSE;
       break;
@@ -650,16 +704,18 @@ gst_v4l2_set_defaults (GstV4l2Object * v4l2object)
 
   tuner = GST_TUNER (v4l2object->element);
 
-  if (v4l2object->norm)
-    norm = gst_tuner_find_norm_by_name (tuner, v4l2object->norm);
+  if (v4l2object->tv_norm)
+    norm = gst_v4l2_tuner_get_norm_by_std_id (v4l2object, v4l2object->tv_norm);
+  GST_DEBUG_OBJECT (v4l2object->element, "tv_norm=0x%" G_GINT64_MODIFIER "x, "
+      "norm=%p", (guint64) v4l2object->tv_norm, norm);
   if (norm) {
     gst_tuner_set_norm (tuner, norm);
   } else {
     norm =
         GST_TUNER_NORM (gst_tuner_get_norm (GST_TUNER (v4l2object->element)));
     if (norm) {
-      g_free (v4l2object->norm);
-      v4l2object->norm = g_strdup (norm->label);
+      v4l2object->tv_norm =
+          gst_v4l2_tuner_get_std_id_by_norm (v4l2object, norm);
       gst_tuner_norm_changed (tuner, norm);
     }
   }
@@ -839,6 +895,8 @@ gst_v4l2_object_get_format_from_fourcc (GstV4l2Object * v4l2object,
 
 
 /* complete made up ranking, the values themselves are meaningless */
+/* These ranks MUST be X such that X<<15 fits on a signed int - see
+   the comment at the end of gst_v4l2_object_format_get_rank. */
 #define YUV_BASE_RANK     1000
 #define JPEG_BASE_RANK     500
 #define DV_BASE_RANK       200
@@ -1606,7 +1664,7 @@ gst_v4l2_object_probe_caps_for_format_and_size (GstV4l2Object * v4l2object,
         num, denom);
     gst_value_set_fraction (&step, -num, denom);
 
-    while (gst_value_compare (&min, &max) <= 0) {
+    while (gst_value_compare (&min, &max) != GST_VALUE_GREATER_THAN) {
       GValue rate = { 0, };
 
       num = gst_value_get_fraction_numerator (&min);
@@ -1665,7 +1723,8 @@ return_data:
   s = gst_structure_copy (template);
   gst_structure_set (s, "width", G_TYPE_INT, (gint) width,
       "height", G_TYPE_INT, (gint) height,
-      "interlaced", G_TYPE_BOOLEAN, interlaced, NULL);
+      "interlaced", G_TYPE_BOOLEAN, interlaced,
+      "pixel-aspect-ratio", GST_TYPE_FRACTION, 1, 1, NULL);
 
   if (G_IS_VALUE (&rates)) {
     /* only change the framerate on the template when we have a valid probed new
@@ -1775,7 +1834,7 @@ gst_v4l2_object_probe_caps_for_format (GstV4l2Object * v4l2object,
         size.stepwise.step_height);
 
     for (w = size.stepwise.min_width, h = size.stepwise.min_height;
-        w < size.stepwise.max_width && h < size.stepwise.max_height;
+        w <= size.stepwise.max_width && h <= size.stepwise.max_height;
         w += size.stepwise.step_width, h += size.stepwise.step_height) {
       if (w == 0 || h == 0)
         continue;
@@ -1887,13 +1946,15 @@ default_frame_sizes:
     }
 
     /* Since we can't get framerate directly, try to use the current norm */
-    if (v4l2object->norm && v4l2object->norms) {
+    if (v4l2object->tv_norm && v4l2object->norms) {
       GList *norms;
       GstTunerNorm *norm = NULL;
+      GstTunerNorm *current =
+          gst_v4l2_tuner_get_norm_by_std_id (v4l2object, v4l2object->tv_norm);
 
       for (norms = v4l2object->norms; norms != NULL; norms = norms->next) {
         norm = (GstTunerNorm *) norms->data;
-        if (!strcmp (norm->label, v4l2object->norm))
+        if (!strcmp (norm->label, current->label))
           break;
       }
       /* If it's possible, set framerate to that (discrete) value */
@@ -1924,6 +1985,8 @@ default_frame_sizes:
       gst_structure_set (tmp, "height", GST_TYPE_INT_RANGE, min_h, max_h, NULL);
 
     gst_structure_set (tmp, "interlaced", G_TYPE_BOOLEAN, interlaced, NULL);
+    gst_structure_set (tmp, "pixel-aspect-ratio",
+        GST_TYPE_FRACTION, 1, 1, NULL);
 
     gst_caps_append_structure (ret, tmp);
 
@@ -1935,9 +1998,10 @@ static gboolean
 gst_v4l2_object_get_nearest_size (GstV4l2Object * v4l2object,
     guint32 pixelformat, gint * width, gint * height, gboolean * interlaced)
 {
-  struct v4l2_format fmt;
+  struct v4l2_format fmt, prevfmt;
   int fd;
   int r;
+  int prevfmt_valid;
 
   g_return_val_if_fail (width != NULL, FALSE);
   g_return_val_if_fail (height != NULL, FALSE);
@@ -1947,6 +2011,11 @@ gst_v4l2_object_get_nearest_size (GstV4l2Object * v4l2object,
       *width, *height, GST_FOURCC_ARGS (pixelformat));
 
   fd = v4l2object->video_fd;
+
+  /* Some drivers are buggy and will modify the currently set format
+     when processing VIDIOC_TRY_FMT, so we remember what is set at the
+     minute, and will reset it when done. */
+  prevfmt_valid = (v4l2_ioctl (fd, VIDIOC_G_FMT, &prevfmt) >= 0);
 
   /* get size delimiters */
   memset (&fmt, 0, sizeof (fmt));
@@ -1970,12 +2039,12 @@ gst_v4l2_object_get_nearest_size (GstV4l2Object * v4l2object,
     /* The driver might not implement TRY_FMT, in which case we will try
        S_FMT to probe */
     if (errno != ENOTTY)
-      return FALSE;
+      goto error;
 
     /* Only try S_FMT if we're not actively capturing yet, which we shouldn't
        be, because we're still probing */
     if (GST_V4L2_IS_ACTIVE (v4l2object))
-      return FALSE;
+      goto error;
 
     GST_LOG_OBJECT (v4l2object->element,
         "Failed to probe size limit with VIDIOC_TRY_FMT, trying VIDIOC_S_FMT");
@@ -1994,7 +2063,7 @@ gst_v4l2_object_get_nearest_size (GstV4l2Object * v4l2object,
     }
 
     if (r < 0)
-      return FALSE;
+      goto error;
   }
 
   GST_LOG_OBJECT (v4l2object->element,
@@ -2017,10 +2086,17 @@ gst_v4l2_object_get_nearest_size (GstV4l2Object * v4l2object,
       GST_WARNING_OBJECT (v4l2object->element,
           "Unsupported field type for %" GST_FOURCC_FORMAT "@%ux%u",
           GST_FOURCC_ARGS (pixelformat), *width, *height);
-      return FALSE;
+      goto error;
   }
 
+  if (prevfmt_valid)
+    v4l2_ioctl (fd, VIDIOC_S_FMT, &prevfmt);
   return TRUE;
+
+error:
+  if (prevfmt_valid)
+    v4l2_ioctl (fd, VIDIOC_S_FMT, &prevfmt);
+  return FALSE;
 }
 
 
@@ -2049,7 +2125,9 @@ gst_v4l2_object_set_format (GstV4l2Object * v4l2object, guint32 pixelformat,
   GST_V4L2_CHECK_OPEN (v4l2object);
   GST_V4L2_CHECK_NOT_ACTIVE (v4l2object);
 
-  if (pixelformat == GST_MAKE_FOURCC ('M', 'P', 'E', 'G'))
+  /* Only unconditionally accept mpegts for sources */
+  if ((v4l2object->type == V4L2_BUF_TYPE_VIDEO_CAPTURE) &&
+      (pixelformat == GST_MAKE_FOURCC ('M', 'P', 'E', 'G')))
     return TRUE;
 
   memset (&format, 0x00, sizeof (struct v4l2_format));
@@ -2104,11 +2182,20 @@ get_fmt_failed:
   }
 set_fmt_failed:
   {
-    GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, SETTINGS,
-        (_("Device '%s' cannot capture at %dx%d"),
-            v4l2object->videodev, width, height),
-        ("Call to S_FMT failed for %" GST_FOURCC_FORMAT " @ %dx%d: %s",
-            GST_FOURCC_ARGS (pixelformat), width, height, g_strerror (errno)));
+    if (errno == EBUSY) {
+      GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, BUSY,
+          (_("Device '%s' is busy"), v4l2object->videodev),
+          ("Call to S_FMT failed for %" GST_FOURCC_FORMAT " @ %dx%d: %s",
+              GST_FOURCC_ARGS (pixelformat), width, height,
+              g_strerror (errno)));
+    } else {
+      GST_ELEMENT_ERROR (v4l2object->element, RESOURCE, SETTINGS,
+          (_("Device '%s' cannot capture at %dx%d"),
+              v4l2object->videodev, width, height),
+          ("Call to S_FMT failed for %" GST_FOURCC_FORMAT " @ %dx%d: %s",
+              GST_FOURCC_ARGS (pixelformat), width, height,
+              g_strerror (errno)));
+    }
     return FALSE;
   }
 invalid_dimensions:

@@ -115,6 +115,7 @@ gst_oss4_source_base_init (gpointer g_class)
   templ = gst_pad_template_new ("src", GST_PAD_SRC, GST_PAD_ALWAYS,
       gst_oss4_audio_get_template_caps ());
   gst_element_class_add_pad_template (element_class, templ);
+  gst_object_unref (templ);
 }
 
 static void
@@ -273,7 +274,7 @@ gst_oss4_source_getcaps (GstBaseSrc * bsrc)
   oss = GST_OSS4_SOURCE (bsrc);
 
   if (oss->fd == -1) {
-    caps = gst_caps_copy (gst_oss4_audio_get_template_caps ());
+    caps = gst_oss4_audio_get_template_caps ();
   } else if (oss->probed_caps) {
     caps = gst_caps_copy (oss->probed_caps);
   } else {

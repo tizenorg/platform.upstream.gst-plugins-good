@@ -49,6 +49,11 @@
 #ifdef HAVE_CONFIG_H
 #include "config.h"
 #endif
+
+/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
+ * with newer GLib versions (>= 2.31.0) */
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include <string.h>
 #include <math.h>
 
@@ -102,8 +107,8 @@ gst_wavparse_base_init (gpointer g_class)
   GstPadTemplate *src_template;
 
   /* register pads */
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_template_factory));
+  gst_element_class_add_static_pad_template (element_class,
+      &sink_template_factory);
 
   src_template = gst_pad_template_new ("wavparse_src", GST_PAD_SRC,
       GST_PAD_SOMETIMES, gst_riff_create_audio_template_caps ());
@@ -1200,7 +1205,8 @@ gst_wavparse_stream_headers (GstWavParse * wav)
 
     if (tag == GST_RIFF_TAG_JUNK || tag == GST_RIFF_TAG_JUNQ ||
         tag == GST_RIFF_TAG_bext || tag == GST_RIFF_TAG_BEXT ||
-        tag == GST_RIFF_TAG_LIST) {
+        tag == GST_RIFF_TAG_LIST || tag == GST_RIFF_TAG_ID32 ||
+        tag == GST_RIFF_TAG_IDVX) {
       GST_DEBUG_OBJECT (wav, "skipping %" GST_FOURCC_FORMAT " chunk",
           GST_FOURCC_ARGS (tag));
       gst_buffer_unref (buf);
@@ -1307,7 +1313,10 @@ gst_wavparse_stream_headers (GstWavParse * wav)
 
       gst_tag_list_add (wav->tags, GST_TAG_MERGE_REPLACE,
           GST_TAG_AUDIO_CODEC, codec_name, NULL);
-
+#ifdef WAVPARSER_MODIFICATION
+      gst_tag_list_add (wav->tags, GST_TAG_MERGE_REPLACE,
+          GST_TAG_BITRATE, (guint)(wav->av_bps*8), NULL); // bitrate
+#endif
       g_free (codec_name);
       codec_name = NULL;
     }

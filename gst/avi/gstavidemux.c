@@ -45,11 +45,17 @@
 #include "config.h"
 #endif
 
+/* FIXME 0.11: suppress warnings for deprecated API such as GStaticRecMutex
+ * with newer GLib versions (>= 2.31.0) */
+#define GLIB_DISABLE_DEPRECATION_WARNINGS
+
 #include <string.h>
 #include <stdio.h>
-#include <stdlib.h>
 
+#ifdef DIVX_DRM /* need to check to use same define */
+#include <stdlib.h>
 #include <dlfcn.h>
+#endif
 
 #include "gst/riff/riff-media.h"
 #include "gstavidemux.h"
@@ -148,8 +154,10 @@ static void gst_avi_demux_parse_idit (GstAviDemux * avi, GstBuffer * buf);
 /*Modification: Added function to find out the frame_type for index-table generation */
 static int
 gst_avi_demux_find_frame_type (GstAviStream *stream, GstBuffer *buf, int *frame_type);
+static void gst_avidemux_forward_trickplay (GstAviDemux * avi, GstAviStream * stream, guint64 *timestamp);
+static void gst_avidemux_backward_trickplay (GstAviDemux * avi, GstAviStream * stream, guint64 *timestamp);
+static GstFlowReturn gst_avidemux_seek_to_previous_keyframe (GstAviDemux *avi);
 #endif
-
 
 static GstElementClass *parent_class = NULL;
 
@@ -315,8 +323,10 @@ gst_avi_demux_base_init (GstAviDemuxClass * klass)
   gst_element_class_add_pad_template (element_class, audiosrctempl);
   gst_element_class_add_pad_template (element_class, videosrctempl);
   gst_element_class_add_pad_template (element_class, subsrctempl);
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&sink_templ));
+  gst_element_class_add_static_pad_template (element_class, &sink_templ);
+  gst_object_unref (audiosrctempl);
+  gst_object_unref (videosrctempl);
+  gst_object_unref (subsrctempl);
   gst_element_class_set_details_simple (element_class, "Avi demuxer",
       "Codec/Demuxer",
       "Demultiplex an avi file into audio and video",
@@ -393,6 +403,11 @@ gst_avi_demux_reset_stream (GstAviDemux * avi, GstAviStream * stream)
   g_free (stream->name);
   g_free (stream->index);
   g_free (stream->indexes);
+#ifdef AVIDEMUX_MODIFICATION
+  if (stream->trickplay_info)
+   g_free (stream->trickplay_info);
+#endif
+
   if (stream->initdata)
     gst_buffer_unref (stream->initdata);
   if (stream->extradata)
@@ -1016,9 +1031,6 @@ gst_avi_demux_handle_sink_event (GstPad * pad, GstEvent * event)
 
       stop = GST_CLOCK_TIME_NONE;
 
-      /* compensate for slack */
-      if (time)
-        time += GST_AVI_SEEK_PUSH_DISPLACE;
       /* set up segment and send downstream */
       gst_segment_set_newsegment_full (&avi->segment, update, rate, arate,
           GST_FORMAT_TIME, time, stop, time);
@@ -2097,14 +2109,16 @@ too_small:
 static inline void
 gst_avi_demux_roundup_list (GstAviDemux * avi, GstBuffer ** buf)
 {
-  if (G_UNLIKELY (GST_BUFFER_SIZE (*buf) & 1)) {
+  gint size = GST_BUFFER_SIZE (*buf);
+
+  if (G_UNLIKELY (size & 1)) {
     GstBuffer *obuf;
 
-    GST_DEBUG_OBJECT (avi, "rounding up dubious list size %d",
-        GST_BUFFER_SIZE (*buf));
-    obuf = gst_buffer_new_and_alloc (GST_BUFFER_SIZE (*buf) + 1);
-    memcpy (GST_BUFFER_DATA (obuf), GST_BUFFER_DATA (*buf),
-        GST_BUFFER_SIZE (*buf));
+    GST_DEBUG_OBJECT (avi, "rounding up dubious list size %d", size);
+    obuf = gst_buffer_new_and_alloc (size + 1);
+    memcpy (GST_BUFFER_DATA (obuf), GST_BUFFER_DATA (*buf), size);
+    /* assume 0 padding, at least makes outcome deterministic */
+    (GST_BUFFER_DATA (obuf))[size] = 0;
     gst_buffer_replace (buf, obuf);
   }
 }
@@ -2127,12 +2141,12 @@ gst_avi_demux_parse_stream (GstAviDemux * avi, GstBuffer * buf)
 {
   GstAviStream *stream;
   GstElementClass *klass;
-  GstPadTemplate *templ = NULL;
+  GstPadTemplate *templ;
   GstBuffer *sub = NULL;
   guint offset = 4;
   guint32 tag = 0;
   gchar *codec_name = NULL, *padname = NULL;
-  const gchar *tag_name = NULL;
+  const gchar *tag_name;
   GstCaps *caps = NULL;
   GstPad *pad;
   GstElement *element;
@@ -2462,7 +2476,7 @@ gst_avi_demux_parse_stream (GstAviDemux * avi, GstBuffer * buf)
       break;
     }
     default:
-      g_assert_not_reached ();
+      g_return_val_if_reached (FALSE);
   }
 
   /* no caps means no stream */
@@ -2499,10 +2513,6 @@ gst_avi_demux_parse_stream (GstAviDemux * avi, GstBuffer * buf)
       GST_DEBUG_FUNCPTR (gst_avi_demux_src_convert));
 #endif
 
-  if (avi->element_index)
-    gst_index_get_writer_id (avi->element_index, GST_OBJECT_CAST (stream->pad),
-        &stream->index_id);
-
   stream->num = avi->num_streams;
 
   stream->start_entry = 0;
@@ -2526,46 +2536,10 @@ gst_avi_demux_parse_stream (GstAviDemux * avi, GstBuffer * buf)
   avi->num_streams++;
 
 #ifdef AVIDEMUX_MODIFICATION
-/*Modification: Temporary fix for deselcting the ac3parse element in the pipeline to
-                            avoid the trickplay issues */
-  GST_INFO_OBJECT(avi, "prepared caps=> %s", gst_caps_to_string(caps));
-
-#if 1
-  {
-	  GstStructure *tempstruct;
-	  GstStructure *structure;
-	  
-	  tempstruct = gst_caps_get_structure(caps, 0);
-
-	  if(!strcmp(gst_structure_get_name (tempstruct), "audio/x-ac3"))
-	  {
-
-	      structure = gst_structure_copy(tempstruct);
-
-	      gst_structure_set(structure, "framed", G_TYPE_BOOLEAN, TRUE, NULL);
-
-	      gst_caps_remove_structure(caps, 0);
-
-	      gst_caps_merge_structure(caps, structure);
-
-	  }
-	  else if(!strcmp(gst_structure_get_name (tempstruct), "audio/mpeg"))
-	  {
-
-	      structure = gst_structure_copy(tempstruct);
-
-	      gst_structure_set(structure, "parsed", G_TYPE_BOOLEAN, TRUE, NULL);
-
-	      gst_caps_remove_structure(caps, 0);
-
-	      gst_caps_merge_structure(caps, structure);
-
-	  }
-
-  }
-
-#endif
-
+  stream->trickplay_info = g_new0 (TrickPlayInfo, 1);
+  stream->trickplay_info->prev_kidx = 0;
+  stream->trickplay_info->next_kidx = 0;
+  stream->trickplay_info->kidxs_dur_diff = 0;
 #endif
   gst_pad_set_caps (pad, caps);
   gst_pad_set_active (pad, TRUE);
@@ -2813,7 +2787,6 @@ gst_avi_demux_stream_for_id (GstAviDemux * avi, guint32 id)
 static gboolean
 gst_avi_demux_parse_index (GstAviDemux * avi, GstBuffer * buf)
 {
-  guint64 pos_before;
   guint8 *data;
   guint size;
   guint i, num, n;
@@ -2839,7 +2812,6 @@ gst_avi_demux_parse_index (GstAviDemux * avi, GstBuffer * buf)
   GST_INFO_OBJECT (avi, "Parsing index, nr_entries = %6d", num);
 
   index = (gst_riff_index_entry *) data;
-  pos_before = avi->offset;
 
   /* figure out if the index is 0 based or relative to the MOVI start */
   entry.offset = GST_READ_UINT32_LE (&index[0].offset);
@@ -2860,12 +2832,13 @@ gst_avi_demux_parse_index (GstAviDemux * avi, GstBuffer * buf)
             (entry.offset == 0 && n > 0)))
       continue;
 
-	if ( id == GST_MAKE_FOURCC('0','0','d','d')  )
-	{
-		GST_DEBUG("Skipping Encrypt data chunk");
-		continue;
-	}
-
+#ifdef DIVX_DRM /* need to check using same define */
+    if ( id == GST_MAKE_FOURCC('0','0','d','d')  )
+    {
+        GST_DEBUG("Skipping Encrypt data chunk");
+        continue;
+    }
+#endif
 
     /* get the stream for this entry */
     stream = gst_avi_demux_stream_for_id (avi, id);
@@ -3194,159 +3167,6 @@ gst_avi_demux_next_data_buffer (GstAviDemux * avi, guint64 * offset,
   return res;
 }
 
-#ifdef AVIDEMUX_MODIFICATION
-/*Modification: Added function to find out the frame_type for index-table generation */
-
-static int
-gst_avi_demux_find_frame_type (GstAviStream *stream, GstBuffer *buf, int *frame_type)
-{
-    unsigned char *buff = GST_BUFFER_DATA (buf);
-    unsigned int buff_len = GST_BUFFER_SIZE (buf);
-
-    switch (stream->strh->fcc_handler)	
-    {
-        /* mpeg stream parsing case */
-        case GST_MAKE_FOURCC ('X', 'V', 'I', 'D'):
-        case GST_MAKE_FOURCC ('x', 'v', 'i', 'd'):
-        case GST_MAKE_FOURCC ('D', 'X', '5', '0'):
-        case GST_MAKE_FOURCC ('d', 'i', 'v', 'x'):
-        case GST_MAKE_FOURCC ('D', 'I', 'V', 'X'):
-        case GST_MAKE_FOURCC ('B', 'L', 'Z', '0'):
-	 	case GST_MAKE_FOURCC ('F', 'M', 'P', '4'):
-        case GST_MAKE_FOURCC ('U', 'M', 'P', '4'):
-        case GST_MAKE_FOURCC ('F', 'F', 'D', 'S'):	
-        case GST_MAKE_FOURCC ('M', 'P', 'E', 'G'):
-        case GST_MAKE_FOURCC ('M', 'P', 'G', 'I'):
-        case GST_MAKE_FOURCC ('m', 'p', 'g', '1'):
-        case GST_MAKE_FOURCC ('M', 'P', 'G', '1'):
-        case GST_MAKE_FOURCC ('P', 'I', 'M', '1'):
-        case GST_MAKE_FOURCC ('M', 'P', 'G', '2'):
-        case GST_MAKE_FOURCC ('m', 'p', 'g', '2'):
-        case GST_MAKE_FOURCC ('P', 'I', 'M', '2'):
-        case GST_MAKE_FOURCC ('D', 'V', 'R', ' '):
-            {
-                int idx = 0;
-                for (idx=0; idx<(buff_len-3); idx++)
-                {
-                    /* Find VOP start frame which should be in every frame */
-                    //GST_DEBUG ("~~~~~~~~~~~~~~~~~~~~%d : %x", idx, buff[idx]);
-                    if (buff[idx] == 0x00 && buff[idx+1] == 0x00 && buff[idx+2] == 0x01 && buff[idx+3] == 0xB6)
-                        break;
-                }
-            
-                if (idx==(buff_len))
-                {
-                    GST_ERROR ("Invalid input stream : There isn't any VOP header");
-                    return -1;
-                }
-            
-                if ((buff[idx] == 0x00) && (buff[idx+1] == 0x00) && (buff[idx+2] == 0x01))
-                {
-                    if(buff[idx+3] == 0xB6)
-                    {
-                        switch (buff[4] & 0xC0)
-                        {
-                            case 0x00:
-                                GST_DEBUG ("Found Key-Frame");
-            		          *frame_type = GST_AVI_KEYFRAME;
-                                break;
-                            default:
-                                GST_DEBUG ("Found Non-Key frame.. value = %x", buff[4]);
-                                *frame_type = GST_AVI_NON_KEYFRAME;
-                                break;        
-                        }
-                    }
-                    else if (buff[3] == 0xB0)
-                    {
-                        *frame_type = GST_AVI_KEYFRAME;
-                    }
-                }
-            }
-            break;
-        case GST_MAKE_FOURCC ('H', '2', '6', '3'):
-        case GST_MAKE_FOURCC ('h', '2', '6', '3'):
-        case GST_MAKE_FOURCC ('i', '2', '6', '3'):
-        case GST_MAKE_FOURCC ('U', '2', '6', '3'):
-        case GST_MAKE_FOURCC ('v', 'i', 'v', '1'):
-        case GST_MAKE_FOURCC ('T', '2', '6', '3'):
-            {
-                /* TODO:  H263 Frame Parsing */
-		*frame_type = GST_AVI_KEYFRAME;
-            }
-            break;
-        case GST_MAKE_FOURCC ('X', '2', '6', '4'):
-        case GST_MAKE_FOURCC ('x', '2', '6', '4'):
-        case GST_MAKE_FOURCC ('H', '2', '6', '4'):
-        case GST_MAKE_FOURCC ('h', '2', '6', '4'):
-        case GST_MAKE_FOURCC ('a', 'v', 'c', '1'):
-        case GST_MAKE_FOURCC ('A', 'V', 'C', '1'):
-            {
-                gint idx = 0;
-                gint nalu_type = H264_NUT_UNKNOWN;
-                /* H264 Frame Parsing */
-                do
-                {
-                    if (buff[idx+0] == 0x00 &&
-                        buff[idx+1] == 0x00 &&
-                     ((buff [idx+2] == 0x01) || ((buff [idx+2] == 0x00) && (buff [idx+3] == 0x01))))
-                    {
-                        if (buff [idx+2] == 0x01)
-                        {
-                            nalu_type = buff[idx +3] & 0x1f;
-                        }
-                        else if ((buff [idx+2] == 0x00) && (buff [idx+3] == 0x01))
-                        {
-                            nalu_type = buff[idx +4] & 0x1f;
-                        }
-                        if ((nalu_type == H264_NUT_SPS) ||
-                             (nalu_type == H264_NUT_PPS) ||
-                             (nalu_type == H264_NUT_SEI) ||
-                             (nalu_type == H264_NUT_AUD))
-                        {
-                              GST_DEBUG ("Skipping NALU SPS/PPS/SEI/AUD...");
-                        }
-                        else if (nalu_type == H264_NUT_IDR)
-			   {
-                              GST_DEBUG ("Found KEY frame...\n");
-                              *frame_type = GST_AVI_KEYFRAME;
-                              break;
-                        }
-                        else if ((nalu_type == H264_NUT_SLICE) ||
-					(nalu_type == H264_NUT_DPA) ||
-					(nalu_type == H264_NUT_DPB) ||
-					(nalu_type == H264_NUT_DPC) ||
-					(nalu_type == H264_NUT_EOSEQ) ||
-                                   (nalu_type == H264_NUT_EOSTREAM))
-                        {
-                              *frame_type = GST_AVI_NON_KEYFRAME;
-                              break;
-                        }
-                        else
-                        {
-                              GST_DEBUG ("Unknown frame type, val = %d...", *frame_type);
-                              *frame_type = GST_AVI_NON_KEYFRAME;
-                              break;
-                        }
-                        idx ++;
-                    }
-                    else
-                    {
-                        idx++;
-                    }
-                }while (idx < (buff_len - 4));
-            }
-            break;
-	 default:
-	 	//naveen: default make all frames as key frames
-	 	*frame_type = GST_AVI_KEYFRAME;
-            break;
-    }
-	
-    return 0;
-	
-}
-#endif
-
 /*
  * gst_avi_demux_stream_scan:
  * @avi: calling element (used for debugging/errors).
@@ -3397,30 +3217,26 @@ gst_avi_demux_stream_scan (GstAviDemux * avi)
     if (G_UNLIKELY (!stream))
       goto next;
 #ifdef AVIDEMUX_MODIFICATION
-    /*Modification: Added logic to generate the index table with key frames */
-    
-    /* naveen: generating index table with key frames */
-    if (stream->strh->type == GST_RIFF_FCC_vids)
-    {
-        GstBuffer *buf = NULL;
-        int ret = -1;
-
-        res = gst_pad_pull_range (avi->sinkpad, pos, size, &buf);
-        if (res != GST_FLOW_OK)
-        {
-            gst_buffer_unref (buf);
-            GST_ERROR ("[Naveen] Pull failed....\n\n");
-	     break;
-        }
-	
-        ret = gst_avi_demux_find_frame_type (stream, buf, &frame_type);
-	 if (ret == -1)
-	 	break;
-
-        gst_buffer_unref (buf);
+    /* generating index table with key frames */
+    if (stream->strh->type == GST_RIFF_FCC_vids) {
+     GstBuffer *buf = NULL;
+     int ret = -1;
+ 
+     res = gst_pad_pull_range (avi->sinkpad, pos, size, &buf);
+     if (res != GST_FLOW_OK) {
+      gst_buffer_unref (buf);
+      GST_ERROR ("Pull failed....\n\n");
+      break;
+     }
+     ret = gst_avi_demux_find_frame_type (stream, buf, &frame_type);
+     if (ret == -1)
+      break;
+     gst_buffer_unref (buf);
     }
-	
     entry.flags = frame_type;
+#else
+    /* we can't figure out the keyframes, assume they all are */
+    entry.flags = GST_AVI_KEYFRAME;
 #endif
     entry.offset = pos;
     entry.size = size;
@@ -3635,11 +3451,6 @@ gst_avi_demux_check_seekability (GstAviDemux * avi)
    * practice even if it technically may be seekable */
   if (seekable && (start != 0 || stop <= start)) {
     GST_DEBUG_OBJECT (avi, "seekable but unknown start/stop -> disable");
-    seekable = FALSE;
-  }
-
-  if (!avi->element_index) {
-    GST_DEBUG_OBJECT (avi, "no index");
     seekable = FALSE;
   }
 
@@ -4475,7 +4286,11 @@ gst_avi_demux_move_stream (GstAviDemux * avi, GstAviStream * stream,
      * to the next keyframe. If there is a smart decoder downstream he will notice
      * that there are too many encoded frames send and return UNEXPECTED when there
      * are enough decoded frames to fill the segment. */
+#ifdef AVIDEMUX_MODIFICATION
+    next_key = gst_avi_demux_index_for_time (avi, stream, avi->seek_kf_offset);
+#else
     next_key = gst_avi_demux_index_next (avi, stream, index, TRUE);
+#endif
 
     /* FIXME, we go back to 0, we should look at segment.start. We will however
      * stop earlier when the see the timestamp < segment.start */
@@ -4526,7 +4341,12 @@ gst_avi_demux_do_seek (GstAviDemux * avi, GstSegment * segment)
   GstAviStream *stream;
 
   seek_time = segment->last_stop;
-  keyframe = ! !(segment->flags & GST_SEEK_FLAG_KEY_UNIT);
+
+#ifdef AVIDEMUX_MODIFICATION
+  avi->seek_kf_offset = seek_time;
+#endif
+
+  keyframe = !!(segment->flags & GST_SEEK_FLAG_KEY_UNIT);
 
   GST_DEBUG_OBJECT (avi, "seek to: %" GST_TIME_FORMAT
       " keyframe seeking:%d", GST_TIME_ARGS (seek_time), keyframe);
@@ -4538,11 +4358,19 @@ gst_avi_demux_do_seek (GstAviDemux * avi, GstSegment * segment)
   /* get the entry index for the requested position */
   index = gst_avi_demux_index_for_time (avi, stream, seek_time);
   GST_DEBUG_OBJECT (avi, "Got entry %u", index);
+
+
 #ifdef AVIDEMUX_MODIFICATION
-/*Modification: Conditions added to support trickplay*/
-if(segment->rate<=1.0 &&  segment->rate>=0.0)
+  if(segment->rate < 0.0 && index) {
+   /* If index is keyframe, reduce index by 1, so that we could fetch prev keyframe for video */
+   /* This change is done to fix the out of segment issue when seek position is a keyframe position */
+    if (ENTRY_IS_KEYFRAME (&stream->index[index])) {
+      index--;
+    }
+  }
 #endif
-{
+
+
   /* check if we are already on a keyframe */
   if (!ENTRY_IS_KEYFRAME (&stream->index[index])) {
     GST_DEBUG_OBJECT (avi, "not keyframe, searching back");
@@ -4551,7 +4379,7 @@ if(segment->rate<=1.0 &&  segment->rate>=0.0)
     index = gst_avi_demux_index_prev (avi, stream, index, TRUE);
     GST_DEBUG_OBJECT (avi, "previous keyframe at %u", index);
   }
-}
+
   /* move the main stream to this position */
   gst_avi_demux_move_stream (avi, stream, segment, index);
 
@@ -4566,18 +4394,20 @@ if(segment->rate<=1.0 &&  segment->rate>=0.0)
   /* the seek time is also the last_stop and stream time when going
    * forwards */
   segment->last_stop = seek_time;
-  if (segment->rate > 0.0)
-  {
-#ifndef AVIDEMUX_MODIFICATION
-	    /*initialization of rate params */ //Kishore
-    stream->next_kindex=0;
-    stream->prev_kindex=0;
-    stream->total_samples_bet_2_keyframes=0;	
-	stream->audio_frame_count=0;
+
+#ifdef AVIDEMUX_MODIFICATION
+  /*initialization of rate params */
+  stream->trickplay_info->prev_kidx =0;
+  stream->trickplay_info->next_kidx=0;
+  stream->trickplay_info->kidxs_dur_diff=0;	
+  stream->trickplay_info->start_pos = segment->last_stop;
+  /* Adjust seek_time to video keyframe's timestamp so that audio can align to that position */
+  if(segment->rate < 0.0)
+    seek_time = stream->current_timestamp;
 #else
+  if (segment->rate > 0.0)
     segment->time = seek_time;
 #endif
-  }
 
   /* now set DISCONT and align the other streams */
   for (i = 0; i < avi->num_streams; i++) {
@@ -4590,15 +4420,9 @@ if(segment->rate<=1.0 &&  segment->rate>=0.0)
     /* get the entry index for the requested position */
     index = gst_avi_demux_index_for_time (avi, ostream, seek_time);
 
-#ifdef AVIDEMUX_MODIFICATION
-/*Modification: Conditions added to support trickplay */
-	if(segment->rate<=1.0 &&  segment->rate>=0.0)
-#endif
-	{
-	    /* move to previous keyframe */
-	    if (!ENTRY_IS_KEYFRAME (&ostream->index[index]))
-	      index = gst_avi_demux_index_prev (avi, ostream, index, TRUE);
-	}
+    /* move to previous keyframe */
+    if (!ENTRY_IS_KEYFRAME (&ostream->index[index]))
+      index = gst_avi_demux_index_prev (avi, ostream, index, TRUE);
 
     gst_avi_demux_move_stream (avi, ostream, segment, index);
   }
@@ -4687,6 +4511,12 @@ gst_avi_demux_handle_seek (GstAviDemux * avi, GstPad * pad, GstEvent * event)
     gst_segment_set_seek (&seeksegment, rate, format, flags,
         cur_type, cur, stop_type, stop, &update);
   }
+
+#ifdef AVIDEMUX_MODIFICATION
+  if (cur != GST_CLOCK_TIME_NONE)
+    gst_segment_set_last_stop (&seeksegment, GST_FORMAT_TIME, cur);
+#endif
+
   /* do the seek, seeksegment.last_stop contains the new position, this
    * actually never fails. */
   gst_avi_demux_do_seek (avi, &seeksegment);
@@ -4732,9 +4562,8 @@ gst_avi_demux_handle_seek (GstAviDemux * avi, GstPad * pad, GstEvent * event)
         avi->segment.last_stop, stop, avi->segment.time);
   } else {
 #ifdef AVIDEMUX_MODIFICATION
-
-	avi->segment.start = 0;
-	avi->segment.time = 0;
+    avi->segment.start = 0;
+    avi->segment.time = 0;
 #endif
     /* reverse goes from start to last_stop */
     avi->seg_event = gst_event_new_new_segment_full (FALSE,
@@ -4795,12 +4624,6 @@ avi_demux_handle_seek_push (GstAviDemux * avi, GstPad * pad, GstEvent * event)
   gst_event_parse_seek (event, &rate, &format, &flags,
       &cur_type, &cur, &stop_type, &stop);
 
- 	/* some slack aiming for a keyframe */
-  	if (cur < GST_AVI_SEEK_PUSH_DISPLACE)
-    	cur = 0;
-  	else
-    	cur -= GST_AVI_SEEK_PUSH_DISPLACE;
-
   if (format != GST_FORMAT_TIME) {
     GstFormat fmt = GST_FORMAT_TIME;
     gboolean res = TRUE;
@@ -4823,7 +4646,7 @@ avi_demux_handle_seek_push (GstAviDemux * avi, GstPad * pad, GstEvent * event)
   gst_segment_set_seek (&seeksegment, rate, format, flags,
       cur_type, cur, stop_type, stop, &update);
 
-  keyframe = ! !(flags & GST_SEEK_FLAG_KEY_UNIT);
+  keyframe = !!(flags & GST_SEEK_FLAG_KEY_UNIT);
   cur = seeksegment.last_stop;
 
   GST_DEBUG_OBJECT (avi,
@@ -4994,9 +4817,10 @@ swap_line (guint8 * d1, guint8 * d2, guint8 * tmp, gint bytes)
 
 
 #define gst_avi_demux_is_uncompressed(fourcc)		\
-  (fourcc == GST_RIFF_DIB ||				\
-   fourcc == GST_RIFF_rgb ||				\
-   fourcc == GST_RIFF_RGB || fourcc == GST_RIFF_RAW)
+  (fourcc &&						\
+    (fourcc == GST_RIFF_DIB ||				\
+     fourcc == GST_RIFF_rgb ||				\
+     fourcc == GST_RIFF_RGB || fourcc == GST_RIFF_RAW))
 
 /*
  * Invert DIB buffers... Takes existing buffer and
@@ -5032,7 +4856,7 @@ gst_avi_demux_invert (GstAviStream * stream, GstBuffer * buf)
 
   h = stream->strf.vids->height;
   w = stream->strf.vids->width;
-  stride = w * (bpp / 8);
+  stride = GST_ROUND_UP_4 (w * (bpp / 8));
 
   buf = gst_buffer_make_writable (buf);
   if (GST_BUFFER_SIZE (buf) < (stride * h)) {
@@ -5061,13 +4885,15 @@ gst_avi_demux_add_assoc (GstAviDemux * avi, GstAviStream * stream,
     GST_LOG_OBJECT (avi, "adding association %" GST_TIME_FORMAT "-> %"
         G_GUINT64_FORMAT, GST_TIME_ARGS (timestamp), offset);
     gst_index_add_association (avi->element_index, avi->index_id,
-        keyframe ? GST_ASSOCIATION_FLAG_KEY_UNIT : GST_ASSOCIATION_FLAG_NONE,
-        GST_FORMAT_TIME, timestamp, GST_FORMAT_BYTES, offset, NULL);
-    /* well, current_total determines TIME and entry DEFAULT (frame #) ... */
+        keyframe ? GST_ASSOCIATION_FLAG_KEY_UNIT :
+        GST_ASSOCIATION_FLAG_DELTA_UNIT, GST_FORMAT_TIME, timestamp,
+        GST_FORMAT_BYTES, offset, NULL);
+    /* current_entry is DEFAULT (frame #) */
     gst_index_add_association (avi->element_index, stream->index_id,
-        GST_ASSOCIATION_FLAG_NONE,
-        GST_FORMAT_TIME, stream->current_total, GST_FORMAT_BYTES, offset,
-        GST_FORMAT_DEFAULT, stream->current_entry, NULL);
+        keyframe ? GST_ASSOCIATION_FLAG_KEY_UNIT :
+        GST_ASSOCIATION_FLAG_DELTA_UNIT, GST_FORMAT_TIME, timestamp,
+        GST_FORMAT_BYTES, offset, GST_FORMAT_DEFAULT, stream->current_entry,
+        NULL);
   }
 }
 
@@ -5112,183 +4938,6 @@ done:
   return ret;
 }
 
-#ifdef AVIDEMUX_MODIFICATION
-/*Modification: Added functions to update the stream while doing the trickplay*/
-
-/* move @stream to the next position in its index */
-static GstFlowReturn
-gst_avi_demux_update_backward (GstAviDemux * avi, GstAviStream * stream,
-    GstFlowReturn ret)
-{
-  int old_entry, new_entry;
-
-  old_entry = stream->current_entry;
-  /* move forwards */
-  new_entry = stream->next_kindex;
-
-  /* see if we reached the end */
-      if (new_entry < (int)stream->start_entry) {
-        /* we stepped all the way to the start, eos */
-        GST_DEBUG_OBJECT (avi, "reverse reached start %u", stream->start_entry);
-        goto eos;
-      }
-
-  if (new_entry != old_entry) {
-    stream->current_entry = new_entry;
-    stream->current_total = stream->index[new_entry].total;
-
-      /* we moved DISCONT, full update */
-      gst_avi_demux_get_buffer_info (avi, stream, new_entry,
-          &stream->current_timestamp, &stream->current_ts_end,
-          &stream->current_offset, &stream->current_offset_end);
-      /* and MARK discont for this stream */
-      stream->last_flow = GST_FLOW_OK;
-      stream->discont = TRUE;
-      GST_DEBUG_OBJECT (avi, "Moved from %u to %u, ts %" GST_TIME_FORMAT
-          ", ts_end %" GST_TIME_FORMAT ", off %" G_GUINT64_FORMAT
-          ", off_end %" G_GUINT64_FORMAT, old_entry, new_entry,
-          GST_TIME_ARGS (stream->current_timestamp),
-          GST_TIME_ARGS (stream->current_ts_end), stream->current_offset,
-          stream->current_offset_end);
-  }
-  return ret;
-
-  /* ERROR */
-eos:
-  {
-    GST_DEBUG_OBJECT (avi, "we are EOS");
-    /* setting current_timestamp to -1 marks EOS */
-    stream->current_timestamp = -1;
-    return GST_FLOW_UNEXPECTED;
-  }
-}
-
-/* move @stream to the next position in its index */
-static GstFlowReturn
-gst_avi_demux_update (GstAviDemux * avi, GstAviStream * stream,
-    GstFlowReturn ret)
-{
-  guint old_entry, new_entry;
-
-  old_entry = stream->current_entry;
-  /* move forwards */
-  new_entry = stream->next_kindex;
-
-  /* see if we reached the end */
-  if (new_entry > stream->stop_entry) {
-    if (avi->segment.rate < 0.0) {
-      if (stream->step_entry == stream->start_entry) {
-        /* we stepped all the way to the start, eos */
-        GST_DEBUG_OBJECT (avi, "reverse reached start %u", stream->start_entry);
-        goto eos;
-      }
-      /* backwards, stop becomes step, find a new step */
-      stream->stop_entry = stream->step_entry;
-      stream->step_entry = gst_avi_demux_index_prev (avi, stream,
-          stream->stop_entry, TRUE);
-
-      GST_DEBUG_OBJECT (avi,
-          "reverse playback jump: start %u, step %u, stop %u",
-          stream->start_entry, stream->step_entry, stream->stop_entry);
-
-      /* and start from the previous keyframe now */
-      new_entry = stream->step_entry;
-    } else {
-      /* EOS */
-      GST_DEBUG_OBJECT (avi, "forward reached stop %u", stream->stop_entry);
-      goto eos;
-    }
-  }
-
-  if (new_entry != old_entry) {
-    stream->current_entry = new_entry;
-    stream->current_total = stream->index[new_entry].total;
-
-    if (new_entry == old_entry + 1) {
-      GST_DEBUG_OBJECT (avi, "moved forwards from %u to %u",
-          old_entry, new_entry);
-      /* we simply moved one step forwards, reuse current info */
-      stream->current_timestamp = stream->current_ts_end;
-      stream->current_offset = stream->current_offset_end;
-      gst_avi_demux_get_buffer_info (avi, stream, new_entry,
-          NULL, &stream->current_ts_end, NULL, &stream->current_offset_end);
-    } else {
-      /* we moved DISCONT, full update */
-      gst_avi_demux_get_buffer_info (avi, stream, new_entry,
-          &stream->current_timestamp, &stream->current_ts_end,
-          &stream->current_offset, &stream->current_offset_end);
-      /* and MARK discont for this stream */
-      stream->last_flow = GST_FLOW_OK;
-      stream->discont = TRUE;
-      GST_DEBUG_OBJECT (avi, "Moved from %u to %u, ts %" GST_TIME_FORMAT
-          ", ts_end %" GST_TIME_FORMAT ", off %" G_GUINT64_FORMAT
-          ", off_end %" G_GUINT64_FORMAT, old_entry, new_entry,
-          GST_TIME_ARGS (stream->current_timestamp),
-          GST_TIME_ARGS (stream->current_ts_end), stream->current_offset,
-          stream->current_offset_end);
-    }
-  }
-  return ret;
-
-  /* ERROR */
-eos:
-  {
-    GST_DEBUG_OBJECT (avi, "we are EOS");
-    /* setting current_timestamp to -1 marks EOS */
-    stream->current_timestamp = -1;
-    return GST_FLOW_UNEXPECTED;
-  }
-}
-
-/* move @stream to the next position in its index */
-static GstFlowReturn
-gst_avi_demux_previous (GstAviDemux * avi, GstAviStream * stream,
-    GstFlowReturn ret)
-{
-  int old_entry, new_entry;
-
-  old_entry = stream->current_entry;
-  /* move forwards */
-  new_entry = old_entry - 1;
-	GST_INFO("now at:%d, start:%d", new_entry, stream->start_entry);
-  /* see if we reached the end */
-  if (new_entry < (int)stream->start_entry) {
-        /* we stepped all the way to the start, eos */
-        GST_DEBUG_OBJECT (avi, "reverse reached start %u", stream->start_entry);
-        goto eos;
-      }
-	GST_INFO("%d", new_entry);
-  if (new_entry != old_entry) {
-    stream->current_entry = new_entry;
-    stream->current_total = stream->index[new_entry].total;
-
-      /* we moved DISCONT, full update */
-      gst_avi_demux_get_buffer_info (avi, stream, new_entry,
-          &stream->current_timestamp, &stream->current_ts_end,
-          &stream->current_offset, &stream->current_offset_end);
-      /* and MARK discont for this stream */
-      stream->last_flow = GST_FLOW_OK;
-      stream->discont = TRUE;
-      GST_DEBUG_OBJECT (avi, "Moved from %u to %u, ts %" GST_TIME_FORMAT
-          ", ts_end %" GST_TIME_FORMAT ", off %" G_GUINT64_FORMAT
-          ", off_end %" G_GUINT64_FORMAT, old_entry, new_entry,
-          GST_TIME_ARGS (stream->current_timestamp),
-          GST_TIME_ARGS (stream->current_ts_end), stream->current_offset,
-          stream->current_offset_end);
-  }
-  return ret;
-
-  /* ERROR */
-eos:
-  {
-    GST_DEBUG_OBJECT (avi, "we are EOS");
-    /* setting current_timestamp to -1 marks EOS */
-    stream->current_timestamp = -1;
-    return GST_FLOW_UNEXPECTED;
-  }
-}
-#endif
-
 /* move @stream to the next position in its index */
 static GstFlowReturn
 gst_avi_demux_advance (GstAviDemux * avi, GstAviStream * stream,
@@ -5303,6 +4952,11 @@ gst_avi_demux_advance (GstAviDemux * avi, GstAviStream * stream,
   /* see if we reached the end */
   if (new_entry >= stream->stop_entry) {
     if (avi->segment.rate < 0.0) {
+
+#ifdef AVIDEMUX_MODIFICATION
+      GST_DEBUG_OBJECT (avi, "backward reached stop %u", stream->stop_entry);
+      goto eos;
+#else
       if (stream->step_entry == stream->start_entry) {
         /* we stepped all the way to the start, eos */
         GST_DEBUG_OBJECT (avi, "reverse reached start %u", stream->start_entry);
@@ -5319,6 +4973,7 @@ gst_avi_demux_advance (GstAviDemux * avi, GstAviStream * stream,
 
       /* and start from the previous keyframe now */
       new_entry = stream->step_entry;
+#endif
     } else {
       /* EOS */
       GST_DEBUG_OBJECT (avi, "forward reached stop %u", stream->stop_entry);
@@ -5393,6 +5048,12 @@ gst_avi_demux_find_next (GstAviDemux * avi, gfloat rate)
 
     /* position of -1 is EOS */
     if (position != -1) {
+#ifdef AVIDEMUX_MODIFICATION
+      if (position < min_time) {
+        min_time = position;
+        stream_num = i;
+      }
+#else
       if (rate > 0.0 && position < min_time) {
         min_time = position;
         stream_num = i;
@@ -5400,6 +5061,7 @@ gst_avi_demux_find_next (GstAviDemux * avi, gfloat rate)
         max_time = position;
         stream_num = i;
       }
+#endif
     }
   }
   return stream_num;
@@ -5418,13 +5080,8 @@ gst_avi_demux_loop_data (GstAviDemux * avi)
   guint64 out_offset, out_offset_end;
   gboolean keyframe;
   GstAviIndexEntry *entry;
-#ifdef AVIDEMUX_MODIFICATION
-gdouble minusone = -1;
-#endif
+
   do {
-#ifdef AVIDEMUX_MODIFICATION
-  	timestamp=0;
-#endif
     stream_num = gst_avi_demux_find_next (avi, avi->segment.rate);
 
     /* all are EOS */
@@ -5443,159 +5100,9 @@ gdouble minusone = -1;
       goto next;
     }
 
-#ifdef AVIDEMUX_MODIFICATION
-/*Modification: Added trickplay functionality to achieve upto 64x speed play*/
-
-	if(avi->segment.rate>1.0)
-	{
-		guint64 next_kindex_timestamp;
-
-		GST_DEBUG_OBJECT (avi, "current index:%d, next key index:%d, total keyframes:%d", stream->current_entry, stream->next_kindex, stream->n_keyframes);
-		if((stream->n_keyframes == stream->idx_n && stream->strh->type == GST_RIFF_FCC_vids) || 
-			(stream->strh->type == GST_RIFF_FCC_auds && avi->segment.rate>4.0))
-		{
-
-			GST_DEBUG_OBJECT (avi, "All keyframes case video forward bfore :%d", stream->current_entry);
-
-			stream->next_kindex= stream->current_entry+avi->segment.rate;
-
-			if(stream->next_kindex>stream->idx_n)
-				stream->next_kindex=stream->idx_n;
-
-			gst_avi_demux_update (avi, stream, ret);
-            
-            /* Checking the EOS condition in Trickplay*/
-   			if(stream->current_timestamp == -1)
-			{
-				GST_WARNING_OBJECT(avi, "eos in Trickplay");
-				goto eos;
-			}
-
-
-			GST_DEBUG_OBJECT (avi, "All key frames after :%d", stream->next_kindex);
-		
-		}
-		else if(stream->strh->type == GST_RIFF_FCC_vids)
-		{
-			if(!stream->next_kindex)
-			{
-				stream->next_kindex = stream->prev_kindex = stream->current_entry;
-				
-				while(1)
-				{
-				  	GST_DEBUG_OBJECT (avi, "finding next key index:current index:%d, next key index:%d, total:%d", stream->current_entry, stream->next_kindex, stream->idx_n);
-					
-					if((stream->next_kindex+1)>=stream->idx_n)
-					{
-						GST_DEBUG_OBJECT(avi,"eos");
-						break;
-					}
-					stream->next_kindex = gst_avi_demux_index_next(avi, stream, stream->next_kindex+1, TRUE);
-					if(stream->next_kindex<0)
-					{
-					  	GST_DEBUG_OBJECT (avi, "finding next key index:current index:%d, next key index:%d, total:%d", stream->current_entry, stream->next_kindex, stream->idx_n);
-
-						stream->prev_kindex=stream->next_kindex=0;
-						break;
-					}
-					
-					stream->total_samples_bet_2_keyframes = stream->next_kindex-stream->prev_kindex;
-					next_kindex_timestamp = avi_stream_convert_frames_to_time_unchecked (stream, stream->next_kindex);
-					stream->start_timestamp = avi_stream_convert_frames_to_time_unchecked (stream, stream->prev_kindex);
-					stream->avg_duration_bet_2_keyframes=(next_kindex_timestamp-stream->start_timestamp)/stream->total_samples_bet_2_keyframes;
-
-					stream->samples_to_show_bet_kframes = stream->total_samples_bet_2_keyframes/avi->segment.rate;
-					GST_DEBUG_OBJECT (avi,"avg duration:%"GST_TIME_FORMAT"next:%"GST_TIME_FORMAT"prev:%"GST_TIME_FORMAT", %d, %d", 
-						GST_TIME_ARGS(stream->avg_duration_bet_2_keyframes), 
-						GST_TIME_ARGS(next_kindex_timestamp), 
-						GST_TIME_ARGS(stream->start_timestamp), 
-						stream->total_samples_bet_2_keyframes, stream->samples_to_show_bet_kframes);
-					if(stream->samples_to_show_bet_kframes!=0)
-						break;
-				}
-				
-				stream->discont = TRUE;
-
-			}
-			else
-			{
-				stream->samples_to_show_bet_kframes--;
-
-				if(!stream->samples_to_show_bet_kframes)
-				{
-					stream->next_kindex--;
-					gst_avi_demux_update (avi, stream, ret);
-					stream->next_kindex=0;
-					stream->samples_to_show_bet_kframes=0;
-					stream->discont = TRUE;
-					ret = GST_FLOW_OK;
-				      processed = TRUE;
-					goto next;
-				}
-					
-				timestamp = stream->start_timestamp + (stream->current_entry-stream->prev_kindex)*avi->segment.rate*stream->avg_duration_bet_2_keyframes;
-				duration = stream->avg_duration_bet_2_keyframes*avi->segment.rate;
-				GST_DEBUG_OBJECT (avi,"current:%"GST_TIME_FORMAT"prev:%"GST_TIME_FORMAT"cal:%"GST_TIME_FORMAT", %d", 
-					GST_TIME_ARGS((stream->current_timestamp + stream->current_offset)), 
-					GST_TIME_ARGS(stream->start_timestamp),					
-					GST_TIME_ARGS(timestamp),
-					stream->samples_to_show_bet_kframes);
-				
-			}
-		}
-	}
-	else if(avi->segment.rate<0)
-	{
-		/*  	***********Kishore***********
-		only I frames Displayed 
-		*/
-		if(stream->strh->type == GST_RIFF_FCC_vids)
-		{
-			guint64 time_position;
-			guint64 duration;
-			int index;
-			//sample = &stream->samples[stream->current_entry];
-			time_position=stream->current_timestamp;//avi_stream_convert_frames_to_time_unchecked (stream, stream->current_entry);
-			duration= stream->current_ts_end - time_position;
-			GST_DEBUG_OBJECT (avi, "video time backward:%"GST_TIME_FORMAT"%d",
-	      		GST_TIME_ARGS(time_position), stream->current_entry);
-			if((time_position - (minusone *avi->segment.rate)*duration)>0)
-			    time_position -= (minusone *avi->segment.rate)*duration;
-			else
-				time_position=0;
-
-			GST_DEBUG_OBJECT (avi, "video time backward after:%"GST_TIME_FORMAT,
-	      		GST_TIME_ARGS(time_position));
-			index = gst_avi_demux_index_for_time(avi,stream,time_position);
-
-			stream->next_kindex = gst_avi_demux_index_prev(avi, stream, index, TRUE);
-
-		}
-		else
-		{
-			GST_DEBUG_OBJECT (avi, "audio time backward bfore :%d", stream->current_entry);
-		
-			stream->next_kindex= stream->current_entry-(minusone *avi->segment.rate);				
-
-			if(stream->next_kindex<0)
-				stream->next_kindex=0;
-
-			GST_DEBUG_OBJECT (avi, "audio time backward after :%d", stream->next_kindex);
-		}
-		
-		gst_avi_demux_update_backward(avi, stream, ret);
-
-		stream->discont = TRUE;
-	}
-#endif
     /* get the timing info for the entry */
-#ifdef AVIDEMUX_MODIFICATION
-	if(!timestamp)
-#endif
-	{
-	    timestamp = stream->current_timestamp;
-	    duration = stream->current_ts_end - timestamp;
-	}
+    timestamp = stream->current_timestamp;
+    duration = stream->current_ts_end - timestamp;
     out_offset = stream->current_offset;
     out_offset_end = stream->current_offset_end;
 
@@ -5604,6 +5111,16 @@ gdouble minusone = -1;
     offset = entry->offset;
     size = entry->size;
     keyframe = ENTRY_IS_KEYFRAME (entry);
+
+
+#ifdef AVIDEMUX_MODIFICATION
+    /* Forward trickplay */
+    if(avi->segment.rate > 1.0 && stream->strh->type == GST_RIFF_FCC_vids) {
+      gst_avidemux_forward_trickplay (avi, stream, &timestamp);
+    } else if(avi->segment.rate < 0.0 && stream->strh->type == GST_RIFF_FCC_vids) {
+      gst_avidemux_backward_trickplay (avi, stream, &timestamp);
+    }
+#endif
 
     /* skip empty entries */
     if (size == 0) {
@@ -5662,12 +5179,19 @@ gdouble minusone = -1;
 
     /* update current position in the segment */
     gst_segment_set_last_stop (&avi->segment, GST_FORMAT_TIME, timestamp);
-
+#ifdef AVIDEMUX_MODIFICATION
+    GST_DEBUG_OBJECT (avi, " %s : Pushing buffer of size %u, ts %"
+        GST_TIME_FORMAT ", dur %" GST_TIME_FORMAT ", off %" G_GUINT64_FORMAT
+        ", off_end %" G_GUINT64_FORMAT,
+        stream_num ? "Audio" : "Video", GST_BUFFER_SIZE (buf), GST_TIME_ARGS (timestamp),
+        GST_TIME_ARGS (duration), out_offset, out_offset_end);
+#else
     GST_DEBUG_OBJECT (avi, "Pushing buffer of size %u, ts %"
         GST_TIME_FORMAT ", dur %" GST_TIME_FORMAT ", off %" G_GUINT64_FORMAT
         ", off_end %" G_GUINT64_FORMAT,
         GST_BUFFER_SIZE (buf), GST_TIME_ARGS (timestamp),
         GST_TIME_ARGS (duration), out_offset, out_offset_end);
+#endif
 
 #ifdef DIVX_DRM
 
@@ -5759,23 +5283,8 @@ gdouble minusone = -1;
     }
   next:
     /* move to next item */
-#ifdef AVIDEMUX_MODIFICATION
-    if (avi->segment.rate > 0) {	
-        ret = gst_avi_demux_advance (avi, stream, ret);
-    }
-    else {
-        ret = gst_avi_demux_previous (avi, stream, ret);
-    }
-    
-    /* Checking the EOS condition in Trickplay : naveen*/
-    if((stream->current_timestamp == -1) && (avi->segment.rate != 1.0))
-    {
-        GST_WARNING_OBJECT(avi, "eos in Trickplay");
-        goto eos;
-    }
-#else
     ret = gst_avi_demux_advance (avi, stream, ret);
-#endif
+
     /* combine flows */
     ret = gst_avi_demux_combine_flows (avi, stream, ret);
   } while (!processed);
@@ -6121,7 +5630,7 @@ gst_avi_demux_loop (GstPad * pad)
 #ifdef DIVX_DRM
       /* Send tag to decoder, so decoder can knows that this is divx drm file */
       if (avi->drmContext)
-    	  gst_avi_demux_send_divx_tag (avi);
+        gst_avi_demux_send_divx_tag (avi);
 #endif
 
       avi->state = GST_AVI_DEMUX_MOVI;
@@ -6140,6 +5649,13 @@ gst_avi_demux_loop (GstPad * pad)
       }
       /* process each index entry in turn */
       res = gst_avi_demux_loop_data (avi);
+
+#ifdef AVIDEMUX_MODIFICATION
+      if (avi->segment.rate < 0.0 && res == GST_FLOW_UNEXPECTED) {
+        GST_DEBUG_OBJECT(avi, "Seeking to previous keyframe");
+        res = gst_avidemux_seek_to_previous_keyframe (avi);
+      }
+#endif
 
       /* pause when error */
       if (G_UNLIKELY (res != GST_FLOW_OK)) {
@@ -6174,10 +5690,22 @@ pause:{
 
         GST_INFO_OBJECT (avi, "sending segment_done");
 
+#ifdef AVIDEMUX_MODIFICATION
+        if (avi->segment.rate >= 0) {
+          /* Sending segment done at the end of segment */
+          gst_element_post_message(GST_ELEMENT_CAST (avi),
+            gst_message_new_segment_done (GST_OBJECT_CAST (avi), GST_FORMAT_TIME, stop));
+        } else {
+          /* Sending segment done at the start of segment */
+          gst_element_post_message(GST_ELEMENT_CAST (avi),
+            gst_message_new_segment_done (GST_OBJECT_CAST (avi), GST_FORMAT_TIME, avi->segment.start));
+        }
+#else
         gst_element_post_message
             (GST_ELEMENT_CAST (avi),
             gst_message_new_segment_done (GST_OBJECT_CAST (avi),
                 GST_FORMAT_TIME, stop));
+#endif
       } else {
         push_eos = TRUE;
       }
@@ -6439,3 +5967,302 @@ gst_avi_demux_change_state (GstElement * element, GstStateChange transition)
 done:
   return ret;
 }
+#ifdef AVIDEMUX_MODIFICATION
+/*Modification: Added function to find out the frame_type for index-table generation */
+
+static int
+gst_avi_demux_find_frame_type (GstAviStream *stream, GstBuffer *buf, int *frame_type)
+{
+  unsigned char *buff = NULL;
+  unsigned int buff_len = 0;
+
+  if (!stream || !buf || !frame_type) {
+    GST_ERROR ("Invalid arguments..");
+    return -1;
+  }
+
+  buff = GST_BUFFER_DATA (buf);
+  buff_len = GST_BUFFER_SIZE (buf);
+
+  if ((NULL == buff) || buff_len < 5) {
+    GST_ERROR ("Invalid buffer...");
+    return -1;
+  }
+
+  switch (stream->strh->fcc_handler) {
+    /* mpeg stream parsing case */
+    case GST_MAKE_FOURCC ('X', 'V', 'I', 'D'):
+    case GST_MAKE_FOURCC ('x', 'v', 'i', 'd'):
+    case GST_MAKE_FOURCC ('D', 'X', '5', '0'):
+    case GST_MAKE_FOURCC ('d', 'i', 'v', 'x'):
+    case GST_MAKE_FOURCC ('D', 'I', 'V', 'X'):
+    case GST_MAKE_FOURCC ('B', 'L', 'Z', '0'):
+    case GST_MAKE_FOURCC ('F', 'M', 'P', '4'):
+    case GST_MAKE_FOURCC ('U', 'M', 'P', '4'):
+    case GST_MAKE_FOURCC ('F', 'F', 'D', 'S'):
+    case GST_MAKE_FOURCC ('M', 'P', 'E', 'G'):
+    case GST_MAKE_FOURCC ('M', 'P', 'G', 'I'):
+    case GST_MAKE_FOURCC ('m', 'p', 'g', '1'):
+    case GST_MAKE_FOURCC ('M', 'P', 'G', '1'):
+    case GST_MAKE_FOURCC ('P', 'I', 'M', '1'):
+    case GST_MAKE_FOURCC ('M', 'P', 'G', '2'):
+    case GST_MAKE_FOURCC ('m', 'p', 'g', '2'):
+    case GST_MAKE_FOURCC ('P', 'I', 'M', '2'):
+    case GST_MAKE_FOURCC ('D', 'V', 'R', ' '): {
+      int idx = 0;
+      gboolean found_vop_code = FALSE;
+
+      for (idx=0; idx< (buff_len-4); idx++) {
+        /* Find VOP start frame which should be in every frame */
+        if (buff[idx] == 0x00 && buff[idx+1] == 0x00 && buff[idx+2] == 0x01 && buff[idx+3] == 0xB6) {
+          GST_DEBUG ("Found VOP start code...");
+          found_vop_code = TRUE;
+          break;
+        }
+      }
+
+      if (!found_vop_code) {
+        GST_ERROR ("Invalid input stream : There isn't any VOP header");
+        return -1;
+      }
+
+      if ((buff[idx] == 0x00) && (buff[idx+1] == 0x00) && (buff[idx+2] == 0x01)) {
+        if(buff[idx+3] == 0xB6) {
+          switch (buff[idx+4] & 0xC0) {
+          case 0x00:
+              GST_DEBUG ("Found Key-Frame");
+            *frame_type = GST_AVI_KEYFRAME;
+              break;
+          default:
+              GST_DEBUG ("Found Non-Key frame.. value = %x", buff[idx+4]);
+              *frame_type = GST_AVI_NON_KEYFRAME;
+              break;
+          }
+        }
+      }
+    }
+    break;
+    case GST_MAKE_FOURCC ('H', '2', '6', '3'):
+    case GST_MAKE_FOURCC ('h', '2', '6', '3'):
+    case GST_MAKE_FOURCC ('i', '2', '6', '3'):
+    case GST_MAKE_FOURCC ('U', '2', '6', '3'):
+    case GST_MAKE_FOURCC ('v', 'i', 'v', '1'):
+    case GST_MAKE_FOURCC ('T', '2', '6', '3'): {
+      /* FIXME: H263 Frame Parsing is yet to be done.*/
+      *frame_type = GST_AVI_KEYFRAME;
+    }
+    break;
+    case GST_MAKE_FOURCC ('X', '2', '6', '4'):
+    case GST_MAKE_FOURCC ('x', '2', '6', '4'):
+    case GST_MAKE_FOURCC ('H', '2', '6', '4'):
+    case GST_MAKE_FOURCC ('h', '2', '6', '4'):
+    case GST_MAKE_FOURCC ('a', 'v', 'c', '1'):
+    case GST_MAKE_FOURCC ('A', 'V', 'C', '1'): {
+      gint idx = 0;
+      gint nalu_type = H264_NUT_UNKNOWN;
+
+      /* H264 Frame Parsing */
+      do {
+        if (buff[idx+0] == 0x00 &&
+             buff[idx+1] == 0x00 &&
+            ((buff [idx+2] == 0x01) || ((buff [idx+2] == 0x00) && (buff [idx+3] == 0x01)))) {
+
+          if (buff [idx+2] == 0x01) {
+            nalu_type = buff[idx +3] & 0x1f;
+          } else if ((buff [idx+2] == 0x00) && (buff [idx+3] == 0x01)) {
+            nalu_type = buff[idx +4] & 0x1f;
+            idx++;
+          }
+
+          if ((nalu_type == H264_NUT_SPS) ||
+              (nalu_type == H264_NUT_PPS) ||
+              (nalu_type == H264_NUT_SEI) ||
+              (nalu_type == H264_NUT_AUD)) {
+            GST_LOG ("Skipping NALU SPS/PPS/SEI/AUD...");
+          } else if (nalu_type == H264_NUT_IDR) {
+            GST_DEBUG ("Found KEY frame...\n");
+            *frame_type = GST_AVI_KEYFRAME;
+            break;
+          } else if ((nalu_type == H264_NUT_SLICE) ||
+                         (nalu_type == H264_NUT_DPA) ||
+                         (nalu_type == H264_NUT_DPB) ||
+                         (nalu_type == H264_NUT_DPC) ||
+                         (nalu_type == H264_NUT_EOSEQ) ||
+                         (nalu_type == H264_NUT_EOSTREAM)) {
+            *frame_type = GST_AVI_NON_KEYFRAME;
+            break;
+          } else {
+            GST_DEBUG ("Unknown frame type, val = %d...", *frame_type);
+            *frame_type = GST_AVI_NON_KEYFRAME;
+            break;
+          }
+        }
+        idx++;
+      }while (idx < (buff_len - 4));
+    }
+    break;
+    default:
+      //default make all frames as key frames
+      *frame_type = GST_AVI_KEYFRAME;
+    break;
+  }
+
+  return 0;
+
+}
+
+static void gst_avidemux_forward_trickplay (GstAviDemux * avi, GstAviStream * stream, guint64 *timestamp)
+{
+  guint32 nsamples = 0; /* Number of samples between two consecutive keyframes */
+  guint64 next_kindex_timestamp;
+  guint64 prev_kindex_timestamp;
+
+  if (*timestamp < stream->trickplay_info->start_pos) {
+    GST_LOG_OBJECT (avi, "Received shown sample... not applying trickplay algo");
+    return;
+  }
+
+  if (stream->trickplay_info->next_kidx == 0) {
+    stream->trickplay_info->next_kidx = stream->trickplay_info->prev_kidx = stream->current_entry;
+
+    /* while loop to handle multiple consecutive key frames */
+    while(1) {
+      if((stream->trickplay_info->next_kidx +1)>=stream->idx_n) {
+        GST_DEBUG_OBJECT(avi,"eos");
+        break;
+      }
+
+      /* find previous key frame */
+      stream->trickplay_info->next_kidx  = gst_avi_demux_index_next(avi, stream, stream->trickplay_info->next_kidx +1, TRUE);
+
+      /* based no.of sample between key frame and rate, drop frames */
+      GST_DEBUG_OBJECT (avi, "current index :%d, next key index : %d", stream->current_entry, stream->trickplay_info->next_kidx);
+
+      /* find no.of samples between present and previous key frames */
+      nsamples = stream->trickplay_info->next_kidx - stream->trickplay_info->prev_kidx;
+
+      /* find corresponding timestamps of present and previous keyframes */
+      next_kindex_timestamp = avi_stream_convert_frames_to_time_unchecked (stream, stream->trickplay_info->next_kidx);
+      prev_kindex_timestamp = avi_stream_convert_frames_to_time_unchecked (stream, stream->trickplay_info->prev_kidx);
+
+      /* find average duration between key frames */
+      stream->trickplay_info->kidxs_dur_diff = (next_kindex_timestamp - prev_kindex_timestamp)/nsamples;
+
+      stream->trickplay_info->show_samples = nsamples / avi->segment.rate;
+
+      GST_DEBUG_OBJECT (avi, " duration between keyframes:%"GST_TIME_FORMAT, GST_TIME_ARGS(stream->trickplay_info->kidxs_dur_diff));
+
+      if(stream->trickplay_info->show_samples) {
+        GST_DEBUG_OBJECT (avi, "samples to display between two key frames = %d",
+        stream->trickplay_info->show_samples);
+        /* found no. of samples to show between key frames */
+        *timestamp = avi_stream_convert_frames_to_time_unchecked (stream, stream->current_entry);
+        break;
+      } else if ((!stream->trickplay_info->show_samples) &&
+                    (stream->trickplay_info->next_kidx >= (stream->idx_n-1))){
+        /* shown samples required to show between 2 key frames */
+       stream->current_entry = stream->trickplay_info->next_kidx -1; /* next_kidx -1 is because advance_sample will increment */
+       stream->trickplay_info->next_kidx = 0;
+       break;
+      }
+    }
+    stream->discont = TRUE;
+  } else {
+    stream->trickplay_info->show_samples--;
+    prev_kindex_timestamp = avi_stream_convert_frames_to_time_unchecked (stream, stream->trickplay_info->prev_kidx);
+    *timestamp = prev_kindex_timestamp +
+      (stream->current_entry - stream->trickplay_info->prev_kidx) * avi->segment.rate * stream->trickplay_info->kidxs_dur_diff;
+
+    if (stream->trickplay_info->show_samples == 0) {
+      /* shown samples required to show between 2 key frames */
+      GST_DEBUG_OBJECT (avi, "reached end of keyframe interval....Jumping to next key index = %d", stream->trickplay_info->next_kidx);
+      stream->current_entry= stream->trickplay_info->next_kidx -1; /* next_kidx -1 is because advance_sample will increment */
+      stream->trickplay_info->next_kidx = 0;
+      stream->discont = TRUE;
+    }
+  }
+}
+
+static void
+gst_avidemux_backward_trickplay (GstAviDemux * avi, GstAviStream * stream, guint64 *timestamp)
+{
+  int index;
+
+  /* backward trick play */
+  GST_DEBUG_OBJECT (avi, "backward trickplay start");
+  index = gst_avi_demux_index_for_time(avi,stream,avi->seek_kf_offset);
+  gst_avi_demux_move_stream (avi, stream, &avi->segment, index);
+}
+
+static GstFlowReturn
+gst_avidemux_seek_to_previous_keyframe (GstAviDemux *avi)
+{
+  guint index;
+  GstAviStream *stream;
+  GstClockTime seek_time;
+  int i;
+  guint64 time_position;
+  guint64 duration;
+  gdouble minusone = -1;
+
+
+  /* FIXME, this code assumes the main stream with keyframes is stream 0,
+  * which is mostly correct... */
+  stream = &avi->stream[avi->main_stream];
+
+  if(stream->current_entry <= stream->start_entry) {
+    /* Video stream reached start of the clip. So stop seeking to previous and send newsegment
+    from _loop function, so that normal playback resumes*/
+    goto eos;
+  }
+
+  index = stream->current_entry;
+  time_position = avi_stream_convert_frames_to_time_unchecked (stream, index);
+  duration= stream->current_ts_end - time_position;
+
+  if((time_position - (minusone *avi->segment.rate)*duration)>0)
+   time_position -= (minusone *avi->segment.rate)*duration;
+  else
+   time_position=0;
+
+  avi->seek_kf_offset = time_position;
+
+  GST_DEBUG_OBJECT (avi, " seek_kf_offset after:%"GST_TIME_FORMAT, GST_TIME_ARGS(avi->seek_kf_offset));
+
+  index = gst_avi_demux_index_for_time(avi,stream,time_position);
+
+  index = gst_avi_demux_index_prev (avi, stream, index, TRUE);
+
+  gst_avi_demux_move_stream (avi, stream, &avi->segment, index);
+
+  seek_time = avi_stream_convert_frames_to_time_unchecked (stream, index);
+  GST_DEBUG_OBJECT (avi, " seek_time is :%"GST_TIME_FORMAT, GST_TIME_ARGS(seek_time));
+
+
+  stream->last_flow = GST_FLOW_OK;
+  stream->discont = TRUE;
+
+  /* Aligning other stream */
+  for (i = 0; i < avi->num_streams; i++) {
+    GstAviStream *ostream;
+
+    ostream = &avi->stream[i];
+    if ((ostream == stream) || (ostream->index == NULL))
+      continue;
+
+    /* get the entry index for the requested position */
+    index = gst_avi_demux_index_for_time (avi, ostream, seek_time);
+
+    gst_avi_demux_move_stream (avi, ostream, &avi->segment, index);
+
+    ostream->last_flow = GST_FLOW_OK;
+    ostream->discont = TRUE;
+  }
+  return GST_FLOW_OK;
+eos:
+  return GST_FLOW_UNEXPECTED;
+
+}
+
+#endif
+

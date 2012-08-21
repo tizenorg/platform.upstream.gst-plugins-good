@@ -13,54 +13,53 @@ LDFLAGS ?=
 PREFIX ?= /usr
 DATADIR ?= /opt
 
-CONFIGURE_OPTION += --disable-static \
---disable-nls \
---with-html-dir=/tmp/dump \
---disable-examples \
---disable-gconftool    \
---disable-alpha    \
---disable-apetag   \
---disable-audiofx  \
---disable-auparse  \
---disable-cutter   \
---disable-debugutils    \
---disable-deinterlace  \
---disable-effectv  \
---disable-equalizer    \
---disable-icydemux \
---disable-flx  \
---disable-goom \
---disable-goom2k1  \
---disable-level    \
---disable-monoscope    \
---disable-multipart    \
---disable-replaygain   \
---disable-smpte    \
---disable-spectrum \
---disable-videobox \
---disable-videomixer   \
---disable-y4m  \
---disable-directsound  \
---disable-oss  \
---disable-sunaudio \
---disable-osx_aidio    \
---disable-osx_video    \
---disable-aalib    \
---disable-aalibtest    \
---disable-annodex  \
---disable-cairo    \
---disable-esd  \
---disable-esdtest  \
---disable-flac \
---disable-gconf    \
---disable-hal  \
---disable-libcaca  \
---disable-libdv    \
---disable-dv1394   \
---disable-shout2   \
---disable-shout2test   \
---disable-speex \
---disable-taglib
+CONFIGURE_OPTION += --disable-static		\
+		--disable-nls			\
+		--with-html-dir=/tmp/dump	\
+		--disable-examples		\
+		--disable-gconftool		\
+		--disable-alpha			\
+		--disable-apetag		\
+		--disable-audiofx		\
+		--disable-auparse		\
+		--disable-cutter		\
+		--disable-debugutils		\
+		--disable-deinterlace		\
+		--disable-effectv		\
+		--disable-equalizer		\
+		--disable-icydemux		\
+		--disable-flx			\
+		--disable-goom			\
+		--disable-goom2k1		\
+		--disable-level			\
+		--disable-monoscope		\
+		--disable-replaygain		\
+		--disable-smpte			\
+		--disable-spectrum		\
+		--disable-videobox		\
+		--disable-videomixer		\
+		--disable-y4m			\
+		--disable-directsound		\
+		--disable-oss			\
+		--disable-sunaudio		\
+		--disable-osx_aidio		\
+		--disable-osx_video		\
+		--disable-aalib			\
+		--disable-aalibtest		\
+		--disable-annodex		\
+		--disable-cairo			\
+		--disable-esd			\
+		--disable-esdtest		\
+		--disable-flac			\
+		--disable-gconf			\
+		--disable-hal			\
+		--disable-libcaca		\
+		--disable-libdv			\
+		--disable-dv1394		\
+		--disable-shout2		\
+		--disable-shout2test		\
+		--disable-speex			\
+		--disable-taglib
 
 #--disable-wavenc   \
 #--disable-bz2 \
@@ -85,6 +84,7 @@ CONFIGURE_OPTION += --disable-static \
 #--disable-xvideo \
 #--disable-videocrop \
 
+CFLAGS += -DGST_EXT_SOUP_MODIFICATION
 
 ifneq (,$(findstring noopt,$(DEB_BUILD_OPTIONS)))
 	CFLAGS += -O0

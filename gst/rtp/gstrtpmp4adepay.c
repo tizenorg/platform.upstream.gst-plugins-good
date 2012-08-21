@@ -51,7 +51,7 @@ GST_STATIC_PAD_TEMPLATE ("sink",
         /* All optional parameters
          *
          * "profile-level-id=[1,MAX]"
-         * "config=" 
+         * "config="
          */
     )
     );
@@ -75,10 +75,10 @@ gst_rtp_mp4a_depay_base_init (gpointer klass)
 {
   GstElementClass *element_class = GST_ELEMENT_CLASS (klass);
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_mp4a_depay_src_template));
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&gst_rtp_mp4a_depay_sink_template));
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_mp4a_depay_src_template);
+  gst_element_class_add_static_pad_template (element_class,
+      &gst_rtp_mp4a_depay_sink_template);
 
   gst_element_class_set_details_simple (element_class,
       "RTP MPEG4 audio depayloader", "Codec/Depayloader/Network/RTP",
@@ -130,7 +130,7 @@ gst_rtp_mp4a_depay_finalize (GObject * object)
 }
 
 static const guint aac_sample_rates[] = { 96000, 88200, 64000, 48000,
-  44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000
+  44100, 32000, 24000, 22050, 16000, 12000, 11025, 8000, 7350
 };
 
 static gboolean
@@ -229,7 +229,7 @@ gst_rtp_mp4a_depay_setcaps (GstBaseRTPDepayload * depayload, GstCaps * caps)
 
       if (!gst_bit_reader_get_bits_uint8 (&br, &sr_idx, 4))
         goto bad_config;
-      if (sr_idx > 12 && sr_idx != 15) {
+      if (sr_idx >= G_N_ELEMENTS (aac_sample_rates) && sr_idx != 15) {
         GST_WARNING_OBJECT (depayload, "invalid sample rate index %d", sr_idx);
         goto bad_config;
       }
@@ -247,6 +247,8 @@ gst_rtp_mp4a_depay_setcaps (GstBaseRTPDepayload * depayload, GstCaps * caps)
         /* index of 15 means we get the rate in the next 24 bits */
         if (!gst_bit_reader_get_bits_uint32 (&br, &rate, 24))
           goto bad_config;
+      } else if (sr_idx >= G_N_ELEMENTS (aac_sample_rates)) {
+        goto bad_config;
       } else {
         /* else use the rate from the table */
         rate = aac_sample_rates[sr_idx];
@@ -315,7 +317,6 @@ gst_rtp_mp4a_depay_process (GstBaseRTPDepayload * depayload, GstBuffer * buf)
     guint8 *data;
     guint pos;
     GstClockTime timestamp;
-    guint offset;
 
     avail = gst_adapter_available (rtpmp4adepay->adapter);
     timestamp = gst_adapter_prev_timestamp (rtpmp4adepay->adapter, NULL);
@@ -326,8 +327,6 @@ gst_rtp_mp4a_depay_process (GstBaseRTPDepayload * depayload, GstBuffer * buf)
     data = GST_BUFFER_DATA (outbuf);
     /* position in data we are at */
     pos = 0;
-    /* timestamp offset */
-    offset = 0;
 
     /* looping through the number of sub-frames in the audio payload */
     for (i = 0; i <= rtpmp4adepay->numSubFrames; i++) {
@@ -366,18 +365,15 @@ gst_rtp_mp4a_depay_process (GstBaseRTPDepayload * depayload, GstBuffer * buf)
       data += skip;
       avail -= skip;
 
-      if (offset > 0 && timestamp != -1 && depayload->clock_rate != 0) {
-        timestamp +=
-            gst_util_uint64_scale_int (offset, GST_SECOND,
-            depayload->clock_rate);
-      }
-
       GST_BUFFER_TIMESTAMP (tmp) = timestamp;
       gst_base_rtp_depayload_push (depayload, tmp);
 
-      /* calculate offsets for next buffers */
-      if (rtpmp4adepay->frame_len) {
-        offset += rtpmp4adepay->frame_len;
+      /* shift ts for next buffers */
+      if (rtpmp4adepay->frame_len && timestamp != -1
+          && depayload->clock_rate != 0) {
+        timestamp +=
+            gst_util_uint64_scale_int (rtpmp4adepay->frame_len, GST_SECOND,
+            depayload->clock_rate);
       }
     }
 

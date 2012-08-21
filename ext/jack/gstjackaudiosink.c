@@ -83,6 +83,7 @@ gst_jack_audio_sink_allocate_channels (GstJackAudioSink * sink, gint channels)
 
   /* alloc enough output ports */
   sink->ports = g_realloc (sink->ports, sizeof (jack_port_t *) * channels);
+  sink->buffers = g_realloc (sink->buffers, sizeof (sample_t *) * channels);
 
   /* create an output port for each channel */
   while (sink->port_count < channels) {
@@ -123,6 +124,8 @@ gst_jack_audio_sink_free_channels (GstJackAudioSink * sink)
   }
   g_free (sink->ports);
   sink->ports = NULL;
+  g_free (sink->buffers);
+  sink->buffers = NULL;
 }
 
 /* ringbuffer abstract base class */
@@ -187,19 +190,17 @@ jack_process_cb (jack_nframes_t nframes, void *arg)
   gint readseg, len;
   guint8 *readptr;
   gint i, j, flen, channels;
-  sample_t **buffers, *data;
+  sample_t *data;
 
   buf = GST_RING_BUFFER_CAST (arg);
   sink = GST_JACK_AUDIO_SINK (GST_OBJECT_PARENT (buf));
 
   channels = buf->spec.channels;
 
-  /* alloc pointers to samples */
-  buffers = g_alloca (sizeof (sample_t *) * channels);
-
   /* get target buffers */
   for (i = 0; i < channels; i++) {
-    buffers[i] = (sample_t *) jack_port_get_buffer (sink->ports[i], nframes);
+    sink->buffers[i] =
+        (sample_t *) jack_port_get_buffer (sink->ports[i], nframes);
   }
 
   if (gst_ring_buffer_prepare_read (buf, &readseg, &readptr, &len)) {
@@ -217,7 +218,7 @@ jack_process_cb (jack_nframes_t nframes, void *arg)
      * deinterleave into the jack target buffers */
     for (i = 0; i < nframes; i++) {
       for (j = 0; j < channels; j++) {
-        buffers[j][i] = *data++;
+        sink->buffers[j][i] = *data++;
       }
     }
 
@@ -231,7 +232,7 @@ jack_process_cb (jack_nframes_t nframes, void *arg)
     /* We are not allowed to read from the ringbuffer, write silence to all
      * jack output buffers */
     for (i = 0; i < channels; i++) {
-      memset (buffers[i], 0, nframes * sizeof (sample_t));
+      memset (sink->buffers[i], 0, nframes * sizeof (sample_t));
     }
   }
   return 0;
@@ -328,7 +329,11 @@ gst_jack_ring_buffer_open_device (GstRingBuffer * buf)
 
   GST_DEBUG_OBJECT (sink, "open");
 
-  name = g_get_application_name ();
+  if (sink->client_name) {
+    name = sink->client_name;
+  } else {
+    name = g_get_application_name ();
+  }
   if (!name)
     name = "GStreamer";
 
@@ -643,8 +648,9 @@ enum
   SIGNAL_LAST
 };
 
-#define DEFAULT_PROP_CONNECT 	GST_JACK_CONNECT_AUTO
-#define DEFAULT_PROP_SERVER 	NULL
+#define DEFAULT_PROP_CONNECT 		GST_JACK_CONNECT_AUTO
+#define DEFAULT_PROP_SERVER 		NULL
+#define DEFAULT_PROP_CLIENT_NAME 	NULL
 
 enum
 {
@@ -652,6 +658,7 @@ enum
   PROP_CONNECT,
   PROP_SERVER,
   PROP_CLIENT,
+  PROP_CLIENT_NAME,
   PROP_LAST
 };
 
@@ -680,8 +687,8 @@ gst_jack_audio_sink_base_init (gpointer g_class)
       "Sink/Audio", "Output audio to a JACK server",
       "Wim Taymans <wim.taymans@gmail.com>");
 
-  gst_element_class_add_pad_template (element_class,
-      gst_static_pad_template_get (&jackaudiosink_sink_factory));
+  gst_element_class_add_static_pad_template (element_class,
+      &jackaudiosink_sink_factory);
 }
 
 static void
@@ -710,6 +717,19 @@ gst_jack_audio_sink_class_init (GstJackAudioSinkClass * klass)
           "The Jack server to connect to (NULL = default)",
           DEFAULT_PROP_SERVER, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
+  /**
+   * GstJackAudioSink:client-name
+   *
+   * The client name to use.
+   *
+   * Since: 0.10.31
+   */
+  g_object_class_install_property (gobject_class, PROP_CLIENT_NAME,
+      g_param_spec_string ("client-name", "Client name",
+          "The client name of the Jack instance (NULL = default)",
+          DEFAULT_PROP_CLIENT_NAME,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
   g_object_class_install_property (gobject_class, PROP_CLIENT,
       g_param_spec_boxed ("client", "JackClient", "Handle for jack client",
           GST_TYPE_JACK_CLIENT,
@@ -737,6 +757,8 @@ gst_jack_audio_sink_init (GstJackAudioSink * sink,
   sink->jclient = NULL;
   sink->ports = NULL;
   sink->port_count = 0;
+  sink->client_name = g_strdup (DEFAULT_PROP_CLIENT_NAME);
+  sink->buffers = NULL;
 }
 
 static void
@@ -745,6 +767,12 @@ gst_jack_audio_sink_dispose (GObject * object)
   GstJackAudioSink *sink = GST_JACK_AUDIO_SINK (object);
 
   gst_caps_replace (&sink->caps, NULL);
+
+  if (sink->client_name != NULL) {
+    g_free (sink->client_name);
+    sink->client_name = NULL;
+  }
+
   G_OBJECT_CLASS (parent_class)->dispose (object);
 }
 
@@ -757,6 +785,10 @@ gst_jack_audio_sink_set_property (GObject * object, guint prop_id,
   sink = GST_JACK_AUDIO_SINK (object);
 
   switch (prop_id) {
+    case PROP_CLIENT_NAME:
+      g_free (sink->client_name);
+      sink->client_name = g_value_dup_string (value);
+      break;
     case PROP_CONNECT:
       sink->connect = g_value_get_enum (value);
       break;
@@ -785,6 +817,9 @@ gst_jack_audio_sink_get_property (GObject * object, guint prop_id,
   sink = GST_JACK_AUDIO_SINK (object);
 
   switch (prop_id) {
+    case PROP_CLIENT_NAME:
+      g_value_set_string (value, sink->client_name);
+      break;
     case PROP_CONNECT:
       g_value_set_enum (value, sink->connect);
       break;
