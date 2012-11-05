@@ -1,4 +1,4 @@
-Name:           gstreamer-plugins-good
+Name:           gst-plugins-good
 Version:        1.0.0
 Release:        2.3
 %define gst_branch 1.0
