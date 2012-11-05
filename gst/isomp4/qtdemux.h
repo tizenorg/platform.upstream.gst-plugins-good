@@ -46,7 +46,7 @@ GST_DEBUG_CATEGORY_EXTERN (qtdemux_debug);
 #define GST_QT_DEMUX_PRIVATE_TAG "private-qt-tag"
 #define GST_QT_DEMUX_CLASSIFICATION_TAG "classification"
 
-#define GST_QTDEMUX_MAX_STREAMS         8
+#define GST_QTDEMUX_MAX_STREAMS         32
 
 typedef struct _GstQTDemux GstQTDemux;
 typedef struct _GstQTDemuxClass GstQTDemuxClass;
@@ -112,7 +112,7 @@ struct _GstQTDemux {
   guint64 seek_offset;
 
   gboolean upstream_seekable;
-  gboolean upstream_size;
+  gint64 upstream_size;
 };
 
 struct _GstQTDemuxClass {

@@ -102,6 +102,12 @@ GST_DEBUG_CATEGORY_STATIC (gst_videomixer2_debug);
   (g_mutex_lock(GST_VIDEO_MIXER2_GET_LOCK (mix)))
 #define GST_VIDEO_MIXER2_UNLOCK(mix) \
   (g_mutex_unlock(GST_VIDEO_MIXER2_GET_LOCK (mix)))
+#define GST_VIDEO_MIXER2_GET_SETCAPS_LOCK(mix) \
+  (&GST_VIDEO_MIXER2(mix)->setcaps_lock)
+#define GST_VIDEO_MIXER2_SETCAPS_LOCK(mix) \
+  (g_mutex_lock(GST_VIDEO_MIXER2_GET_SETCAPS_LOCK (mix)))
+#define GST_VIDEO_MIXER2_SETCAPS_UNLOCK(mix) \
+  (g_mutex_unlock(GST_VIDEO_MIXER2_GET_SETCAPS_LOCK (mix)))
 
 #define FORMATS " { AYUV, BGRA, ARGB, RGBA, ABGR, Y444, Y42B, YUY2, UYVY, "\
                 "   YVYU, I420, YV12, NV12, NV21, Y41B, RGB, BGR, xRGB, xBGR, "\
@@ -174,6 +180,7 @@ gst_videomixer2_update_src_caps (GstVideoMixer2 * mix)
   gint best_fps_n = -1, best_fps_d = -1;
   gboolean ret = TRUE;
 
+  GST_VIDEO_MIXER2_SETCAPS_LOCK (mix);
   GST_VIDEO_MIXER2_LOCK (mix);
 
   for (l = mix->sinkpads; l; l = l->next) {
@@ -270,6 +277,7 @@ gst_videomixer2_update_src_caps (GstVideoMixer2 * mix)
       gst_structure_get_fraction (s, "fraction", &info.fps_n, &info.fps_d);
     }
 
+    gst_caps_unref (caps);
     caps = gst_video_info_to_caps (&info);
 
     GST_VIDEO_MIXER2_UNLOCK (mix);
@@ -280,6 +288,7 @@ gst_videomixer2_update_src_caps (GstVideoMixer2 * mix)
   }
 
 done:
+  GST_VIDEO_MIXER2_SETCAPS_UNLOCK (mix);
   return ret;
 }
 
@@ -835,10 +844,29 @@ gst_videomixer2_blend_buffers (GstVideoMixer2 * mix,
       mix->fill_color (&outframe, 240, 128, 128);
       break;
     case VIDEO_MIXER2_BACKGROUND_TRANSPARENT:
-      gst_buffer_memset (*outbuf, 0, 0, outsize);
+    {
+      guint i, plane, num_planes, height;
+
+      num_planes = GST_VIDEO_FRAME_N_PLANES (&outframe);
+      for (plane = 0; plane < num_planes; ++plane) {
+        guint8 *pdata;
+        gsize rowsize, plane_stride;
+
+        pdata = GST_VIDEO_FRAME_PLANE_DATA (&outframe, plane);
+        plane_stride = GST_VIDEO_FRAME_PLANE_STRIDE (&outframe, plane);
+        rowsize = GST_VIDEO_FRAME_COMP_WIDTH (&outframe, plane)
+            * GST_VIDEO_FRAME_COMP_PSTRIDE (&outframe, plane);
+        height = GST_VIDEO_FRAME_COMP_HEIGHT (&outframe, plane);
+        for (i = 0; i < height; ++i) {
+          memset (pdata, 0, rowsize);
+          pdata += plane_stride;
+        }
+      }
+
       /* use overlay to keep background transparent */
       composite = mix->overlay;
       break;
+    }
   }
 
   for (l = mix->sinkpads; l; l = l->next) {
@@ -1863,6 +1891,7 @@ gst_videomixer2_finalize (GObject * o)
 
   gst_object_unref (mix->collect);
   g_mutex_clear (&mix->lock);
+  g_mutex_clear (&mix->setcaps_lock);
 
   G_OBJECT_CLASS (parent_class)->finalize (o);
 }
@@ -2003,6 +2032,7 @@ gst_videomixer2_init (GstVideoMixer2 * mix)
       (GstCollectPadsClipFunction) gst_videomixer2_sink_clip, mix);
 
   g_mutex_init (&mix->lock);
+  g_mutex_init (&mix->setcaps_lock);
   /* initialize variables */
   gst_videomixer2_reset (mix);
 }
