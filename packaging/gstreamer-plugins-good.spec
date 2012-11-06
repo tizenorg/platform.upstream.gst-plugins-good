@@ -10,7 +10,7 @@ Source0:        http://download.gnome.org/sources/gst-plugins-good/1.0/%{name}-%
 BuildRequires:  gcc-c++
 BuildRequires:  glib2-devel >= 2.31.14
 BuildRequires:  gstreamer-devel >= 1.0.0
-BuildRequires:  gstreamer-plugins-base-devel >= 1.0.0
+BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
 BuildRequires:  gtk-doc >= 1.12
 BuildRequires:  libICE-devel
 BuildRequires:  libSM-devel
@@ -34,8 +34,7 @@ BuildRequires:  pkgconfig(libxml-2.0) >= 2.4.9
 BuildRequires:  pkgconfig(speex) >= 1.1.6
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
-%define gstreamer_plugins_good_req %(xzgrep --text "^GST.*_REQ" %{S:0} | sort -u | sed 's/GST_REQ=/gstreamer >= /;s/GSTPB_REQ=/gstreamer-plugins-base >= /' | tr '\\n' ' ')
-Requires:       gstreamer-plugins-base >= 1.0.0
+Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.0
 Recommends:     %{name}-lang
 Enhances:       gstreamer
@@ -48,22 +47,22 @@ videos. Its plug-in-based architecture means that new data types or
 processing capabilities can be added simply by installing new plug-ins.
 
 %package doc
-Summary:        Documentation for gstreamer-plugins-good
+Summary:        Documentation for %{name}
 Group:          Development/Libraries/C and C++
 Requires:       %{name} = %{version}
 
 %description doc
-This package contains documentation for gstreamer-plugins-good.
+This package contains documentation for %{name}
 
 %package extra
-Summary:        Complementary plugins for gstreamer-plugins-good
+Summary:        Complementary plugins for %{name}
 Group:          Productivity/Multimedia/Other
 Requires:       %{name} = %{version}
-Enhances:       gstreamer-plugins-good
+Enhances:       gst-plugins-good
 
 %description extra
 This package provides complementary plugins for
-gstreamer-plugins-good.
+%{name}.
 
 %prep
 chmod 0644 %{S:0}
