@@ -112,7 +112,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
-%{_libdir}/gstreamer-%{gst_branch}/libgstflac.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstflv.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstflxdec.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstgdkpixbuf.so
