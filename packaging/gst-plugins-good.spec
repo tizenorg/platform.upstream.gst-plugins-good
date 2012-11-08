@@ -19,7 +19,7 @@ BuildRequires:  libXv-devel
 BuildRequires:  bzip2-devel
 BuildRequires:  libjpeg-devel
 BuildRequires:  orc >= 0.4.16
-BuildRequires:  python-base
+BuildRequires:  python
 BuildRequires:  gettext-tools
 # TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
 BuildRequires:  zlib-devel
