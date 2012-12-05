@@ -45,13 +45,6 @@ anything media-related, from real-time sound processing to playing
 videos. Its plug-in-based architecture means that new data types or
 processing capabilities can be added simply by installing new plug-ins.
 
-%package doc
-Summary:        Documentation for %{name}
-Group:          Development/Libraries/C and C++
-Requires:       %{name} = %{version}
-
-%description doc
-This package contains documentation for %{name}
 
 %package extra
 Summary:        Complementary plugins for %{name}
@@ -92,7 +85,7 @@ rm -rf $RPM_BUILD_ROOT
 
 %files
 %defattr(-, root, root)
-%doc COPYING
+%license COPYING
 %{_libdir}/gstreamer-%{gst_branch}/libgstalaw.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstalpha.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstalphacolor.so
@@ -152,9 +145,6 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/gstreamer-%{gst_branch}/libgstximagesrc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
 
-%files doc
-%defattr(-, root, root)
-%{_datadir}/gtk-doc/html/gst-plugins-good-plugins-%{gst_branch}
 
 %files extra
 %defattr(-, root, root)
