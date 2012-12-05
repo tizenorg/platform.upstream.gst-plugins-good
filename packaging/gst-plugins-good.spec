@@ -11,7 +11,6 @@ BuildRequires:  gcc-c++
 BuildRequires:  glib2-devel >= 2.31.14
 BuildRequires:  gstreamer-devel >= 1.0.0
 BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
-BuildRequires:  gtk-doc >= 1.12
 BuildRequires:  libICE-devel
 BuildRequires:  libSM-devel
 # used by libgstvideo4linux2.so
@@ -76,7 +75,7 @@ chmod 0644 %{S:0}
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\
 %endif
-	--enable-gtk-doc\
+	--disable-gtk-doc\
 	--with-gtk=3.0\
 	--enable-experimental
 make %{?jobs:-j%jobs}
