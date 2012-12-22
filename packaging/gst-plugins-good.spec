@@ -1,6 +1,6 @@
 Name:           gst-plugins-good
-Version:        1.0.2
-Release:        1
+Version:        1.0.4
+Release:        0
 %define gst_branch 1.0
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 License:        LGPL-2.1+
@@ -13,14 +13,12 @@ BuildRequires:  gstreamer-devel >= 1.0.0
 BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
 BuildRequires:  libICE-devel
 BuildRequires:  libSM-devel
-# used by libgstvideo4linux2.so
 BuildRequires:  libXv-devel
 BuildRequires:  bzip2-devel
 BuildRequires:  libjpeg-devel
 BuildRequires:  orc >= 0.4.16
 BuildRequires:  python
 BuildRequires:  gettext-tools
-# TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
 BuildRequires:  zlib-devel
 BuildRequires:  pkgconfig(cairo) >= 1.0.0
 BuildRequires:  xsltproc
@@ -35,7 +33,6 @@ BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.0
-Recommends:     %{name}-lang
 Enhances:       gstreamer
 
 %description
