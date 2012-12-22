@@ -1233,6 +1233,10 @@ gst_rtspsrc_cleanup (GstRTSPSrc * src)
     gst_sdp_message_free (src->sdp);
     src->sdp = NULL;
   }
+  if (src->start_segment) {
+    gst_event_unref (src->start_segment);
+    src->start_segment = NULL;
+  }
 }
 
 #define PARSE_INT(p, del, res)          \
@@ -1568,6 +1572,7 @@ again:
       GST_DEBUG_OBJECT (src, "free RTP udpsrc");
       gst_element_set_state (udpsrc0, GST_STATE_NULL);
       gst_object_unref (udpsrc0);
+      udpsrc0 = NULL;
 
       GST_DEBUG_OBJECT (src, "retry %d", count);
       goto again;
@@ -1589,6 +1594,7 @@ again:
     GST_DEBUG_OBJECT (src, "free RTP udpsrc");
     gst_element_set_state (udpsrc0, GST_STATE_NULL);
     gst_object_unref (udpsrc0);
+    udpsrc0 = NULL;
 
     GST_DEBUG_OBJECT (src, "retry %d", count);
     tmp_rtp++;
@@ -1602,7 +1608,7 @@ again:
 
   /* set port */
   tmp_rtcp = tmp_rtp + 1;
-  if (src->client_port_range.max > 0 && tmp_rtcp >= src->client_port_range.max)
+  if (src->client_port_range.max > 0 && tmp_rtcp > src->client_port_range.max)
     goto no_ports;
 
   g_object_set (G_OBJECT (udpsrc1), "port", tmp_rtcp, "reuse", FALSE, NULL);
@@ -1619,6 +1625,7 @@ again:
     GST_DEBUG_OBJECT (src, "free RTP udpsrc");
     gst_element_set_state (udpsrc0, GST_STATE_NULL);
     gst_object_unref (udpsrc0);
+    udpsrc0 = NULL;
 
     GST_DEBUG_OBJECT (src, "free RTCP udpsrc");
     gst_element_set_state (udpsrc1, GST_STATE_NULL);
@@ -1906,11 +1913,6 @@ gst_rtspsrc_perform_seek (GstRTSPSrc * src, GstEvent * event)
   /* now create the newsegment */
   GST_DEBUG_OBJECT (src, "Creating newsegment from %" G_GINT64_FORMAT
       " to %" G_GINT64_FORMAT, src->segment.position, stop);
-
-  /* store the newsegment event so it can be sent from the streaming thread. */
-  if (src->start_segment)
-    gst_event_unref (src->start_segment);
-  src->start_segment = gst_event_new_segment (&src->segment);
 
   /* mark discont */
   GST_DEBUG_OBJECT (src, "mark DISCONT, we did a seek to another position");
@@ -2210,7 +2212,7 @@ new_manager_pad (GstElement * manager, GstPad * pad, GstRTSPSrc * src)
   gchar *name;
   GstPadTemplate *template;
   gint id, ssrc, pt;
-  GList *lstream;
+  GList *ostreams;
   GstRTSPStream *stream;
   gboolean all_added;
 
@@ -2222,11 +2224,31 @@ new_manager_pad (GstElement * manager, GstPad * pad, GstRTSPSrc * src)
   if (sscanf (name, "recv_rtp_src_%u_%u_%u", &id, &ssrc, &pt) != 3)
     goto unknown_stream;
 
-  GST_DEBUG_OBJECT (src, "stream: %u, SSRC %d, PT %d", id, ssrc, pt);
+  GST_DEBUG_OBJECT (src, "stream: %u, SSRC %08x, PT %d", id, ssrc, pt);
 
   stream = find_stream (src, &id, (gpointer) find_stream_by_id);
   if (stream == NULL)
     goto unknown_stream;
+
+  /* we'll add it later see below */
+  stream->added = TRUE;
+
+  /* check if we added all streams */
+  all_added = TRUE;
+  for (ostreams = src->streams; ostreams; ostreams = g_list_next (ostreams)) {
+    GstRTSPStream *ostream = (GstRTSPStream *) ostreams->data;
+
+    GST_DEBUG_OBJECT (src, "stream %p, container %d, disabled %d, added %d",
+        ostream, ostream->container, ostream->disabled, ostream->added);
+
+    /* a container stream only needs one pad added. Also disabled streams don't
+     * count */
+    if (!ostream->container && !ostream->disabled && !ostream->added) {
+      all_added = FALSE;
+      break;
+    }
+  }
+  GST_RTSP_STATE_UNLOCK (src);
 
   /* create a new pad we will use to stream to */
   template = gst_static_pad_template_get (&rtptemplate);
@@ -2234,28 +2256,10 @@ new_manager_pad (GstElement * manager, GstPad * pad, GstRTSPSrc * src)
   gst_object_unref (template);
   g_free (name);
 
-  stream->added = TRUE;
   gst_pad_set_event_function (stream->srcpad, gst_rtspsrc_handle_src_event);
   gst_pad_set_query_function (stream->srcpad, gst_rtspsrc_handle_src_query);
   gst_pad_set_active (stream->srcpad, TRUE);
   gst_element_add_pad (GST_ELEMENT_CAST (src), stream->srcpad);
-
-  /* check if we added all streams */
-  all_added = TRUE;
-  for (lstream = src->streams; lstream; lstream = g_list_next (lstream)) {
-    stream = (GstRTSPStream *) lstream->data;
-
-    GST_DEBUG_OBJECT (src, "stream %p, container %d, disabled %d, added %d",
-        stream, stream->container, stream->disabled, stream->added);
-
-    /* a container stream only needs one pad added. Also disabled streams don't
-     * count */
-    if (!stream->container && !stream->disabled && !stream->added) {
-      all_added = FALSE;
-      break;
-    }
-  }
-  GST_RTSP_STATE_UNLOCK (src);
 
   if (all_added) {
     GST_DEBUG_OBJECT (src, "We added all streams");
@@ -2548,6 +2552,7 @@ gst_rtspsrc_stream_free_udp (GstRTSPStream * stream)
 
   for (i = 0; i < 2; i++) {
     if (stream->udpsrc[i]) {
+      GST_DEBUG ("free UDP source %d for stream %p", i, stream);
       gst_element_set_state (stream->udpsrc[i], GST_STATE_NULL);
       gst_object_unref (stream->udpsrc[i]);
       stream->udpsrc[i] = NULL;
@@ -3258,7 +3263,7 @@ gst_rtspsrc_stream_push_event (GstRTSPSrc * src, GstRTSPStream * stream,
   gboolean res = TRUE;
 
   /* only streams that have a connection to the outside world */
-  if (stream->srcpad == NULL)
+  if (stream->container || stream->disabled)
     goto done;
 
   if (stream->udpsrc[0]) {
@@ -3557,6 +3562,7 @@ gst_rtspsrc_loop_interleaved (GstRTSPSrc * src)
   GstFlowReturn ret = GST_FLOW_OK;
   GstBuffer *buf;
   gboolean is_rtcp, have_data;
+  GstEvent *event;
 
   /* here we are only interested in data messages */
   have_data = FALSE;
@@ -3686,6 +3692,10 @@ gst_rtspsrc_loop_interleaved (GstRTSPSrc * src)
   if (src->need_activate) {
     gst_rtspsrc_activate_streams (src);
     src->need_activate = FALSE;
+  }
+  if ((event = src->start_segment) != NULL) {
+    src->start_segment = NULL;
+    gst_rtspsrc_push_event (src, event);
   }
 
   if (src->base_time == -1) {
@@ -4120,6 +4130,10 @@ gst_rtspsrc_loop_send_cmd (GstRTSPSrc * src, gint cmd, gint mask)
 
   GST_OBJECT_LOCK (src);
   old = src->pending_cmd;
+  if (old == CMD_RECONNECT) {
+    GST_DEBUG_OBJECT (src, "ignore, we were reconnecting");
+    cmd = CMD_RECONNECT;
+  }
   if (old != CMD_WAIT) {
     src->pending_cmd = CMD_WAIT;
     GST_OBJECT_UNLOCK (src);
@@ -4191,6 +4205,7 @@ pause:
           ("streaming task paused, reason %s (%d)", reason, ret));
       gst_rtspsrc_push_event (src, gst_event_new_eos ());
     }
+    gst_rtspsrc_loop_send_cmd (src, CMD_WAIT, CMD_LOOP);
     return FALSE;
   }
 }
@@ -4913,6 +4928,14 @@ gst_rtspsrc_create_transports_string (GstRTSPSrc * src,
     if (add_udp_str)
       g_string_append (result, "/UDP");
     g_string_append (result, ";multicast");
+    if (src->next_port_num != 0) {
+      if (src->client_port_range.max > 0 &&
+          src->next_port_num >= src->client_port_range.max)
+        goto no_ports;
+
+      g_string_append_printf (result, ";client_port=%d-%d",
+          src->next_port_num, src->next_port_num + 1);
+    }
   } else if (protocols & GST_RTSP_LOWER_TRANS_TCP) {
     GST_DEBUG_OBJECT (src, "adding TCP");
 
@@ -4929,7 +4952,13 @@ gst_rtspsrc_create_transports_string (GstRTSPSrc * src,
   /* ERRORS */
 failed:
   {
+    GST_ERROR ("extension gave error %d", res);
     return res;
+  }
+no_ports:
+  {
+    GST_ERROR ("no more ports available");
+    return GST_RTSP_ERROR;
   }
 }
 
@@ -5004,6 +5033,7 @@ done:
   /* ERRORS */
 failed:
   {
+    GST_ERROR ("failed to allocate udp ports");
     return GST_RTSP_ERROR;
   }
 }
@@ -5273,6 +5303,12 @@ gst_rtspsrc_setup_streams (GstRTSPSrc * src, gboolean async)
           /* only allow multicast for other streams */
           GST_DEBUG_OBJECT (src, "stream %p as UDP multicast", stream);
           protocols = GST_RTSP_LOWER_TRANS_UDP_MCAST;
+          /* if the server selected our ports, increment our counters so that
+           * we select a new port later */
+          if (src->next_port_num == transport.port.min &&
+              src->next_port_num + 1 == transport.port.max) {
+            src->next_port_num += 2;
+          }
           break;
         case GST_RTSP_LOWER_TRANS_UDP:
           /* only allow unicast for other streams */
@@ -6115,8 +6151,23 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
    * only in async case, since receive elements may not have been affected
    * by overall state change (e.g. not around yet),
    * do not mess with state in sync case (e.g. seeking) */
-  if (async)
-    gst_element_set_state (GST_ELEMENT_CAST (src), GST_STATE_PLAYING);
+  if (async) {
+    /* state change might be happening in the application thread. A
+     * specific case is when chaging state to NULL where we will wait
+     * for this task to finish (gst_rtspsrc_stop). However this task
+     * will try to change the state to PLAYING causing a deadlock. */
+
+    /* make sure we are not in the middle of a state change. The
+     * state lock is a recursive lock so it's safe to lock twice from
+     * the same thread */
+    if (GST_STATE_TRYLOCK (src)) {
+      gst_element_set_state (GST_ELEMENT_CAST (src), GST_STATE_PLAYING);
+      GST_STATE_UNLOCK (src);
+    } else {
+      res = GST_RTSP_ERROR;
+      goto changing_state;
+    }
+  }
 
   /* construct a control url */
   if (src->control)
@@ -6153,6 +6204,11 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
 
       gst_rtsp_message_add_header (&request, GST_RTSP_HDR_RANGE, hval);
       g_free (hval);
+
+      /* store the newsegment event so it can be sent from the streaming thread. */
+      if (src->start_segment)
+        gst_event_unref (src->start_segment);
+      src->start_segment = gst_event_new_segment (&src->segment);
     }
 
     if (segment->rate != 1.0) {
@@ -6272,6 +6328,11 @@ not_supported:
 was_playing:
   {
     GST_DEBUG_OBJECT (src, "we were already PLAYING");
+    goto done;
+  }
+changing_state:
+  {
+    GST_DEBUG_OBJECT (src, "failed going to PLAYING, already changing state");
     goto done;
   }
 create_request_failed:
@@ -6507,7 +6568,7 @@ gst_rtspsrc_thread (GstRTSPSrc * src)
 
   GST_OBJECT_LOCK (src);
   cmd = src->pending_cmd;
-  if (cmd == CMD_PLAY || cmd == CMD_LOOP)
+  if (cmd == CMD_RECONNECT || CMD_PLAY || cmd == CMD_LOOP)
     src->pending_cmd = CMD_LOOP;
   else
     src->pending_cmd = CMD_WAIT;

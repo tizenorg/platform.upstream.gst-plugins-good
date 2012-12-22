@@ -695,7 +695,7 @@ fill_planar_yuv (GstVideoBoxFill fill_type, guint b_alpha,
     memset (destU, empty_pixel[1], strideU * heightU);
   } else if (heightU) {
     for (; heightU; --heightU) {
-      memset (destU, empty_pixel[0], widthY);
+      memset (destU, empty_pixel[1], widthU);
       destU += strideU;
     }
   }
@@ -703,7 +703,7 @@ fill_planar_yuv (GstVideoBoxFill fill_type, guint b_alpha,
     memset (destV, empty_pixel[2], strideV * heightV);
   } else if (heightV) {
     for (; heightV; --heightV) {
-      memset (destV, empty_pixel[0], widthV);
+      memset (destV, empty_pixel[2], widthV);
       destV += strideV;
     }
   }
@@ -2148,7 +2148,7 @@ fill_gray (GstVideoBoxFill fill_type, guint b_alpha,
   format = GST_VIDEO_FRAME_FORMAT (frame);
 
   width = GST_VIDEO_FRAME_WIDTH (frame);
-  height = GST_VIDEO_FRAME_WIDTH (frame);
+  height = GST_VIDEO_FRAME_HEIGHT (frame);
 
   dest = GST_VIDEO_FRAME_PLANE_DATA (frame, 0);
   dest_stride = GST_VIDEO_FRAME_PLANE_STRIDE (frame, 0);
