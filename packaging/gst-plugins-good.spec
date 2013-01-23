@@ -1,5 +1,5 @@
 Name:           gst-plugins-good
-Version:        1.0.2
+Version:        1.0.5
 Release:        1
 %define gst_branch 1.0
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
@@ -144,6 +144,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/gstreamer-%{gst_branch}/libgstwavparse.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstximagesrc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
 
 
 %files extra
