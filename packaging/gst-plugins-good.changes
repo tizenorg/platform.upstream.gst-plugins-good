@@ -1,3 +1,6 @@
+* Tue Jan 29 2013 Anas Nashif <anas.nashif@intel.com> submit/trunk/20130123.173524@a5f8cd4
+- Add http source and flac support (TZPC-505)
+
 * Wed Jan 23 2013 Anas Nashif <anas.nashif@intel.com> upstream/1.0.5@9fd056f
 - update to 1.0.5
 
