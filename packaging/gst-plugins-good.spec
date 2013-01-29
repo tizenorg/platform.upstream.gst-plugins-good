@@ -33,10 +33,10 @@ BuildRequires:  pkgconfig(libxml-2.0) >= 2.4.9
 BuildRequires:  pkgconfig(speex) >= 1.1.6
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
+BuildRequires:  pkgconfig(libsoup-2.4)
+BuildRequires:  pkgconfig(flac)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.0
-Recommends:     %{name}-lang
-Enhances:       gstreamer
 
 %description
 GStreamer is a streaming media framework based on graphs of filters
@@ -145,6 +145,8 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/gstreamer-%{gst_branch}/libgstximagesrc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstsouphttpsrc.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstflac.so
 
 
 %files extra
