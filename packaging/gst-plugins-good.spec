@@ -35,8 +35,9 @@ BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(flac)
+BuildRequires:  pkgconfig(vpx) >= 1.1.0
 Requires:       gst-plugins-base >= 1.0.0
-Requires:       gstreamer >= 1.0.0
+Requires:       gstreamer >= 1.0.5
 
 %description
 GStreamer is a streaming media framework based on graphs of filters
@@ -104,6 +105,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
+%{_datadir}/gstreamer-%{gst_branch}/presets/GstVP8Enc.prs
 %{_libdir}/gstreamer-%{gst_branch}/libgstflv.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstflxdec.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstgdkpixbuf.so
@@ -147,6 +149,7 @@ rm -rf $RPM_BUILD_ROOT
 %{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstsouphttpsrc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstflac.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstvpx.so
 
 
 %files extra
