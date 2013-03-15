@@ -961,6 +961,7 @@ gst_multiudpsink_init_send (GstMultiUDPSink * sink)
 
   len = sizeof (sndsize);
 #if 0 //WFD wifi Device socket size issue, kernel 3.4.5 patch (sendto() performance -to use default buffer size)
+
   if (sink->buffer_size != 0) {
     sndsize = sink->buffer_size;
 

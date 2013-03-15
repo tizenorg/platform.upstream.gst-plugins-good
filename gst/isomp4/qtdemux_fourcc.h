@@ -197,7 +197,8 @@ G_BEGIN_DECLS
 
 #define FOURCC_XMP_     GST_MAKE_FOURCC('X','M','P','_')
 #define FOURCC_uuid     GST_MAKE_FOURCC('u','u','i','d')
-
+#define FOURCC_encv     GST_MAKE_FOURCC('e','n','c','v')
+#define FOURCC_enca     GST_MAKE_FOURCC('e','n','c','a')
 /* Fragmented MP4 */
 #define FOURCC_mehd     GST_MAKE_FOURCC('m','e','h','d')
 #define FOURCC_mfhd     GST_MAKE_FOURCC('m','f','h','d')

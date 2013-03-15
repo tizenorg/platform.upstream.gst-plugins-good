@@ -2,7 +2,7 @@
 Name:       gst-plugins-good
 Summary:    GStreamer plugins from the "good" set
 Version:    0.10.31
-Release:    19
+Release:    21_1
 Group:      Applications/Multimedia
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
@@ -26,6 +26,7 @@ BuildRequires:  pkgconfig(x11)
 BuildRequires:  pkgconfig(xfixes)
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xext)
+BuildRequires:  pkgconfig(drm-client)
 
 %description
 GStreamer is a streaming media framework, based on graphs of filters

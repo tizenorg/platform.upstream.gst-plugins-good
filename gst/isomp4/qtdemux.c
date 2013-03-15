@@ -112,6 +112,8 @@ typedef struct _QtDemuxSample QtDemuxSample;
 
 #ifdef QTDEMUX_MODIFICATION
 typedef struct _TrickPlayInfo TrickPlayInfo;
+typedef struct _QtDemuxSubSampleEncryption QtDemuxSubSampleEncryption;
+typedef struct _QtDemuxSubSampleEntryInfo QtDemuxSubSampleEntryInfo;
 
 struct _TrickPlayInfo
 {
@@ -120,6 +122,18 @@ struct _TrickPlayInfo
   guint64 kidxs_dur_diff; /* duration between two consecutive key frames */
   gint32 show_samples; /* samples to show between two consecutive key frames */
   guint64 start_pos; /* trickplay start position */
+};
+
+struct _QtDemuxSubSampleEntryInfo
+{
+  guint16 LenofClearData;
+  guint32 LenofEncryptData;
+};
+
+struct _QtDemuxSubSampleEncryption
+{
+  guint16 n_entries;
+  QtDemuxSubSampleEntryInfo *sub_entry;
 };
 #endif
 
@@ -139,6 +153,10 @@ struct _QtDemuxSample
   guint64 timestamp;            /* DTS In mov time */
   guint32 duration;             /* In mov time */
   gboolean keyframe;            /* TRUE when this packet is a keyframe */
+#ifdef QTDEMUX_MODIFICATION
+  guint8 *iv;                         /* initialization vector for decryption*/
+  QtDemuxSubSampleEncryption *sub_encry;
+#endif
 };
 
 /* timestamp is the DTS */
@@ -213,6 +231,60 @@ struct _QtDemuxSample
  *
  * This is a good usecase for the GStreamer accumulated SEGMENT events.
  */
+#ifdef QTDEMUX_MODIFICATION
+typedef char uuid_t[16];
+
+static const uuid_t tfxd_uuid =
+  {
+    0x6d, 0x1d, 0x9b, 0x05,
+    0x42, 0xd5, 0x44, 0xe6,
+    0x80, 0xe2, 0x14, 0x1d,
+    0xaf, 0xf7, 0x57, 0xb2
+  };
+
+static const uuid_t tfrf_uuid =
+  {
+    0xd4, 0x80, 0x7e, 0xf2,
+    0xca, 0x39, 0x46, 0x95,
+    0x8e, 0x54, 0x26, 0xcb,
+    0x9e, 0x46, 0xa7, 0x9f
+  };
+
+static const uuid_t encrypt_uuid =
+  {
+    0xa2, 0x39, 0x4f, 0x52,
+    0x5a, 0x9b, 0x4f, 0x14,
+    0xa2, 0x44, 0x6c, 0x42,
+    0x7c, 0x64, 0x8d, 0xf4
+  };
+
+static const uuid_t protection_uuid =
+  {
+    0xd0, 0x8a, 0x4f, 0x18,
+    0x10, 0xf3, 0x4a, 0x82,
+    0xb6, 0xc8, 0x32, 0xd8,
+    0xab, 0xa1, 0x83, 0xd3
+  };
+static const uuid_t playready_system_id =
+  {
+    0x9a, 0x04, 0xf0, 0x79,
+    0x98, 0x40, 0x42, 0x86,
+    0xab, 0x92, 0xe6, 0x5b,
+    0xe0, 0x88, 0x5f, 0x95
+  };
+
+#define SE_OVERRIDE_TE_FLAGS 0x000001
+#define SE_USE_SUBSAMPLE_ENCRYPTION 0x000002
+
+typedef enum
+{
+  UUID_UNKNOWN = -1,
+  UUID_TFXD,
+  UUID_TFRF,
+  UUID_SAMPLE_ENCRYPT,
+  UUID_PROTECTION_HEADER,
+}uuid_type_t;
+#endif
 
 struct _QtDemuxSegment
 {
@@ -372,6 +444,8 @@ struct _QtDemuxStream
 #ifdef QTDEMUX_MODIFICATION
   guint32 orientation;
   TrickPlayInfo *trickplay_info; /* trickplay specific handle */
+  guint32 prev_n_samples;
+  GQueue *frag_queue; /* used for PIFF fragments in chain mode */
 #endif
 };
 
@@ -468,6 +542,9 @@ static void gst_qtdemux_get_property (GObject * object, guint prop_id,
 static gint32 gst_qtdemux_find_next_keyframe (GstQTDemux * qtdemux, QtDemuxStream * str, guint32 index);
 static void gst_qtdemux_forward_trickplay (GstQTDemux * qtdemux, QtDemuxStream * stream, guint64 *timestamp);
 static void gst_qtdemux_backward_trickplay (GstQTDemux * qtdemux, QtDemuxStream * stream, guint64 *timestamp);
+static gboolean qtdemux_parse_playready_system_id(GstQTDemux * qtdemux, GstByteReader *uuid_data);
+static uuid_type_t qtdemux_get_uuid_type(GstQTDemux * qtdemux, GstByteReader *uuid_data, gint64 *uuid_offset);
+static void qtdemux_post_drm_error (GstQTDemux * qtdemux, int drm_error);
 #endif
 
 static void
@@ -573,6 +650,9 @@ gst_qtdemux_init (GstQTDemux * qtdemux, GstQTDemuxClass * klass)
    qtdemux->filesize = 0;
    qtdemux->maxbuffersize = QTDEMUX_MAX_BUFFER_SIZE;
    qtdemux->fwdtrick_mode = QTDEMUX_DEFAULT_FWD_TRICKPLAY_MODE;
+   qtdemux->encrypt_content = FALSE;
+   qtdemux->piff_fragmented = FALSE;
+   qtdemux->max_pop_ts = 0;
 #endif
 }
 
@@ -1883,6 +1963,23 @@ gst_qtdemux_handle_sink_event (GstPad * sinkpad, GstEvent * event)
       if (!demux->pullbased) {
         gint i;
         gboolean has_valid_stream = FALSE;
+
+#ifdef QTDEMUX_MODIFICATION
+        if (demux->piff_fragmented) {
+          GstBuffer *pop_buf = NULL;
+          GstFlowReturn fret = GST_FLOW_OK;
+
+          for (i = 0; i < demux->n_streams; i++) {
+            if (demux->streams[i]->pad != NULL) {
+              while (!g_queue_is_empty (demux->streams[i]->frag_queue)) {
+                pop_buf = g_queue_pop_head (demux->streams[i]->frag_queue);
+                fret = gst_pad_push (demux->streams[i]->pad, pop_buf);
+                GST_DEBUG_OBJECT (demux->streams[i]->pad, "pushing from event_func : %s\n", gst_flow_get_name (fret));
+              }
+            }
+          }
+        }
+#endif
         for (i = 0; i < demux->n_streams; i++) {
           if (demux->streams[i]->pad != NULL) {
             has_valid_stream = TRUE;
@@ -1966,6 +2063,30 @@ gst_qtdemux_stream_free (GstQTDemux * qtdemux, QtDemuxStream * stream)
   }
   if (stream->pad)
     gst_element_remove_pad (GST_ELEMENT_CAST (qtdemux), stream->pad);
+
+#ifdef QTDEMUX_MODIFICATION
+  if (qtdemux->encrypt_content) {
+    int i =0;
+
+    for (i = 0 ; i < stream->n_samples; i++) {
+      if (stream->samples[i].sub_encry) {
+        if (stream->samples[i].sub_encry->sub_entry) {
+          g_free (stream->samples[i].sub_encry->sub_entry);
+          stream->samples[i].sub_encry->sub_entry = NULL;
+        }
+        free (stream->samples[i].sub_encry);
+        stream->samples[i].sub_encry = NULL;
+      }
+    }
+  }
+
+  if (qtdemux->piff_fragmented && stream->frag_queue) {
+    // TODO: check whether still some buffers are left in queue
+    g_queue_free (stream->frag_queue);
+    stream->frag_queue;
+  }
+#endif
+
   g_free (stream->samples);
   if (stream->caps)
     gst_caps_unref (stream->caps);
@@ -2051,6 +2172,9 @@ gst_qtdemux_change_state (GstElement * element, GstStateChange transition)
       qtdemux->seek_offset = 0;
       qtdemux->upstream_seekable = FALSE;
       qtdemux->upstream_size = 0;
+ #ifdef QTDEMUX_MODIFICATION
+      qtdemux->encrypt_content = FALSE;
+ #endif
       break;
     }
     default:
@@ -2087,8 +2211,26 @@ qtdemux_parse_ftyp (GstQTDemux * qtdemux, const guint8 * buffer, gint length)
     qtdemux->major_brand = QT_FOURCC (buffer + 8);
     GST_DEBUG_OBJECT (qtdemux, "major brand: %" GST_FOURCC_FORMAT,
         GST_FOURCC_ARGS (qtdemux->major_brand));
+
+#ifdef QTDEMUX_MODIFICATION
+    /* checking for piff major brand */
+    if (qtdemux->major_brand == GST_MAKE_FOURCC ('i', 's', 'm', 'l') ||
+        qtdemux->major_brand == GST_MAKE_FOURCC ('p', 'i', 'f', 'f')) {
+        GST_INFO_OBJECT (qtdemux, "clip has PIFF as major brand");
+        qtdemux->piff_fragmented = TRUE;
+    }
+#endif
+
     buf = qtdemux->comp_brands = gst_buffer_new_and_alloc (length - 16);
     memcpy (GST_BUFFER_DATA (buf), buffer + 16, GST_BUFFER_SIZE (buf));
+
+#ifdef QTDEMUX_MODIFICATION
+    /* checking for piff major brand */
+    if (g_strrstr_len (GST_BUFFER_DATA (buf), GST_BUFFER_SIZE (buf), "piff")) {
+        GST_INFO_OBJECT (qtdemux, "clip has PIFF as compatible brand");
+        qtdemux->piff_fragmented = TRUE;
+    }
+#endif
   }
 }
 
@@ -2452,7 +2594,9 @@ qtdemux_parse_trun (GstQTDemux * qtdemux, GstByteReader * trun,
     timestamp += dur;
     sample++;
   }
-
+#ifdef QTDEMUX_MODIFICATION
+  stream->prev_n_samples = stream->n_samples;
+#endif
   stream->n_samples += samples_count;
 
   return TRUE;
@@ -2565,6 +2709,135 @@ unknown_stream:
     return TRUE;
   }
 }
+#ifdef QTDEMUX_MODIFICATION
+static gboolean
+qtdemux_parse_sample_encryption(GstQTDemux * qtdemux, GstByteReader *sample_encrypt, QtDemuxStream * stream)
+{
+  guint32 flags = 0;
+  guint32 sample_count = 0;
+  guint32 i = 0;
+  guint32 algo_id;
+  guint8 iv_size = 0;
+
+  if (!gst_byte_reader_skip (sample_encrypt, 1) ||
+      !gst_byte_reader_get_uint24_be (sample_encrypt, &flags))
+    goto invalid_encryption;
+
+  if (flags & SE_OVERRIDE_TE_FLAGS) {
+    /* get algorithm id */
+    if (!gst_byte_reader_get_uint32_be (sample_encrypt, &algo_id))
+      goto invalid_encryption;
+
+    /* get IV size */
+    if (!gst_byte_reader_get_uint8 (sample_encrypt, &iv_size))
+      goto invalid_encryption;
+
+    GST_DEBUG_OBJECT(qtdemux,"iv is %2x",iv_size);
+    // TODO: need to add reading of KID
+  } else {
+    GST_INFO_OBJECT (qtdemux, "Override flags are not present... taking default IV_Size = 8");
+    iv_size = 8;
+  }
+
+  /* Get sample count*/
+  if (!gst_byte_reader_get_uint32_be (sample_encrypt, &sample_count))
+    goto invalid_encryption;
+
+  GST_INFO_OBJECT (qtdemux, "Sample count = %d", sample_count);
+
+#if 0
+  if (sample_count != stream->n_samples) {
+    GST_ERROR_OBJECT (qtdemux, "Not all samples has IV vectors... Don't know how to handle. sample_cnt = %d and stream->n_samples = %d",
+      sample_count, stream->n_samples);
+    goto invalid_encryption;
+  }
+#endif
+
+  for (i = stream->prev_n_samples; i < stream->n_samples; i++) {
+    guint8 iv_idx = iv_size;
+
+    /* resetting entire IV array */
+    stream->samples[i].iv = (guint8 *) malloc (iv_size);
+    if (NULL == stream->samples[i].iv) {
+      GST_ERROR_OBJECT (qtdemux, "Failed to allocate memory...\n");
+      GST_ELEMENT_ERROR (qtdemux, RESOURCE, NO_SPACE_LEFT, (NULL), ("failed to allocate memory"));
+      return FALSE;
+    }
+    stream->samples[i].sub_encry = NULL;
+    memset (stream->samples[i].iv, 0x00, iv_size);
+
+    iv_idx = 0;
+    while (iv_idx < iv_size) {
+      /* get IV byte */
+      if (!gst_byte_reader_get_uint8 (sample_encrypt, &(stream->samples[i].iv[iv_idx])))
+        goto invalid_encryption;
+
+      iv_idx++;
+    }
+
+#ifdef DEBUG_IV
+  {
+    guint8 tmp_idx = 0;
+    g_print ("sample[%d] : 0x ", i);
+
+    while (tmp_idx < iv_size ) {
+      g_print ("%02x ", stream->samples[i].iv[tmp_idx]);
+      tmp_idx++;
+    }
+    g_print ("\n");
+  }
+#endif
+
+    if (flags & SE_USE_SUBSAMPLE_ENCRYPTION) {
+      guint16 n_entries;
+      guint16 n_idx;
+
+      /* NumberofEntries in SubSampleEncryption */
+      if (!gst_byte_reader_get_uint16_be (sample_encrypt, &n_entries))
+        goto invalid_encryption;
+
+      stream->samples[i].sub_encry = (QtDemuxSubSampleEncryption *) malloc (sizeof (QtDemuxSubSampleEncryption));
+      if (NULL == stream->samples[i].sub_encry) {
+        GST_ERROR_OBJECT (qtdemux, "Failed to allocate memory...\n");
+        GST_ELEMENT_ERROR (qtdemux, RESOURCE, NO_SPACE_LEFT, (NULL), ("failed to allocate memory"));
+        return FALSE;
+      }
+
+      stream->samples[i].sub_encry->sub_entry = g_try_new0 (QtDemuxSubSampleEntryInfo, n_entries);
+      if (NULL == stream->samples[i].sub_encry->sub_entry) {
+        GST_ERROR_OBJECT (qtdemux, "Failed to allocate memory...\n");
+        GST_ELEMENT_ERROR (qtdemux, RESOURCE, NO_SPACE_LEFT, (NULL), ("failed to allocate memory"));
+        return FALSE;
+      }
+
+      stream->samples[i].sub_encry->n_entries = n_entries;
+
+      GST_DEBUG_OBJECT (qtdemux,"No. of subsample entries = %d", stream->samples[i].sub_encry->n_entries);
+
+      for (n_idx = 0; n_idx < n_entries; n_idx++) {
+        if (!gst_byte_reader_get_uint16_be (sample_encrypt, &(stream->samples[i].sub_encry->sub_entry[n_idx].LenofClearData)))
+          goto invalid_encryption;
+
+        GST_DEBUG_OBJECT (qtdemux,"entry[%d] and lengthofClearData = %d", n_idx, stream->samples[i].sub_encry->sub_entry[n_idx].LenofClearData);
+
+        if (!gst_byte_reader_get_uint32_be (sample_encrypt, &(stream->samples[i].sub_encry->sub_entry[n_idx].LenofEncryptData)))
+          goto invalid_encryption;
+
+        GST_DEBUG_OBJECT (qtdemux,"entry[%d] and lengthofEncryptData = %d", n_idx, stream->samples[i].sub_encry->sub_entry[n_idx].LenofEncryptData);
+      }
+    }
+  }
+
+  return TRUE;
+
+invalid_encryption:
+  {
+    GST_ERROR_OBJECT (qtdemux, "invalid sample encryption header");
+    GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT, ("invalid encryption"), (NULL));
+    return FALSE;
+  }
+}
+#endif
 
 static gboolean
 qtdemux_parse_moof (GstQTDemux * qtdemux, const guint8 * buffer, guint length,
@@ -2574,7 +2847,11 @@ qtdemux_parse_moof (GstQTDemux * qtdemux, const guint8 * buffer, guint length,
   GstByteReader trun_data, tfhd_data;
   guint32 ds_size = 0, ds_duration = 0, ds_flags = 0;
   gint64 base_offset, running_offset;
-
+#ifdef QTDEMUX_MODIFICATION
+  GNode *uuid_node;
+  GstByteReader uuid_data;
+  gint64 uuid_offset=-1;
+#endif
   /* NOTE @stream ignored */
 
   moof_node = g_node_new ((guint8 *) buffer);
@@ -2614,6 +2891,29 @@ qtdemux_parse_moof (GstQTDemux * qtdemux, const guint8 * buffer, guint length,
       trun_node = qtdemux_tree_get_sibling_by_type_full (trun_node, FOURCC_trun,
           &trun_data);
     }
+
+#ifdef QTDEMUX_MODIFICATION
+    uuid_node =  qtdemux_tree_get_child_by_type (traf_node, FOURCC_uuid);
+
+    while (uuid_node) {
+      uuid_type_t uuid_type;
+      guint8 *buffer = (guint8 *) uuid_node->data;
+
+      gst_byte_reader_init (&uuid_data, buffer, QT_UINT32 (buffer));
+
+      uuid_type = qtdemux_get_uuid_type (qtdemux, &uuid_data, &uuid_offset);
+
+      if (UUID_SAMPLE_ENCRYPT == uuid_type) {
+        if (!qtdemux_parse_sample_encryption (qtdemux, &uuid_data, stream))
+          goto fail;
+      } else {
+        GST_WARNING_OBJECT (qtdemux, "Ignoring Wrong UUID...");
+      }
+
+      /* iterate all siblings */
+      uuid_node = qtdemux_tree_get_sibling_by_type (uuid_node, FOURCC_uuid);
+    }
+#endif
     /* if no new base_offset provided for next traf,
      * base is end of current traf */
     base_offset = running_offset;
@@ -3019,7 +3319,8 @@ gst_qtdemux_seek_to_previous_keyframe (GstQTDemux * qtdemux)
 #ifdef QTDEMUX_MODIFICATION
   QtDemuxSample *sample;
   gdouble minusone = -1;
-  guint64 time_position = GST_CLOCK_TIME_NONE;
+  guint64 time_position = 0;
+  gint from_sample_values = 0;
 #endif
 
   /* Now we choose an arbitrary stream, get the previous keyframe timestamp
@@ -3029,7 +3330,18 @@ gst_qtdemux_seek_to_previous_keyframe (GstQTDemux * qtdemux)
     QtDemuxStream *str = qtdemux->streams[n];
 
 #ifdef QTDEMUX_MODIFICATION
-    sample = &str->samples[str->sample_index];
+
+    sample = &str->samples[str->from_sample];
+
+    /* get current segment for that stream */
+    seg = &str->segments[str->segment_index];
+
+    time_position =
+      (gst_util_uint64_scale (str->samples[str->from_sample].timestamp, GST_SECOND,
+          str->timescale) - seg->media_start) + seg->time;
+
+    GST_DEBUG_OBJECT (qtdemux, "from sample[%d] timestamp = %"GST_TIME_FORMAT, 
+      str->from_sample, GST_TIME_ARGS(time_position));
 
     if((time_position - (minusone *qtdemux->segment.rate)*sample->duration)>0)
       time_position -= (minusone *qtdemux->segment.rate)*sample->duration;
@@ -3065,6 +3377,27 @@ gst_qtdemux_seek_to_previous_keyframe (GstQTDemux * qtdemux)
     goto eos;
   }
 
+#ifdef QTDEMUX_MODIFICATION
+  for (n = 0; n < qtdemux->n_streams; n++) {
+    QtDemuxStream *str = qtdemux->streams[n];
+
+    GST_DEBUG_OBJECT (str->pad, "from_sample = %d", str->from_sample);
+    from_sample_values |= str->from_sample;
+  }
+
+  GST_DEBUG_OBJECT (qtdemux, "All from_sample_values = %d", from_sample_values);
+
+  if (from_sample_values) {
+    for (n = 0; n < qtdemux->n_streams; n++) {
+      QtDemuxStream *str = qtdemux->streams[n];
+      if (str->from_sample && !ref_str->from_sample) {
+        ref_str = str;
+        GST_DEBUG_OBJECT (qtdemux, "re-assigning ref_str...");
+      }
+    }
+  }
+#endif
+
   if (G_UNLIKELY (!ref_str->from_sample)) {
     GST_DEBUG_OBJECT (qtdemux, "reached the beginning of the file");
     goto eos;
@@ -3077,9 +3410,11 @@ gst_qtdemux_seek_to_previous_keyframe (GstQTDemux * qtdemux)
     k_index = gst_qtdemux_find_keyframe (qtdemux, ref_str,
         ref_str->from_sample - 1);
   } else {
+#ifndef QTDEMUX_MODIFICATION
     if (ref_str->from_sample >= 10)
       k_index = ref_str->from_sample - 10;
     else
+#endif
       k_index = 0;
   }
 
@@ -3888,6 +4223,63 @@ gst_qtdemux_decorate_and_push_buffer (GstQTDemux * qtdemux,
 
   gst_buffer_set_caps (buf, stream->caps);
 
+#ifdef QTDEMUX_MODIFICATION
+  if (qtdemux->encrypt_content) {
+    /* FIXME: decrypt the frame */
+  }
+
+  if (qtdemux->piff_fragmented) {
+    gboolean all_queues_filled = TRUE;
+    gint i = 0;
+    QtDemuxStream *cstream = NULL;
+
+    /* push current buffer */
+    g_queue_push_tail (stream->frag_queue, buf);
+    GST_LOG_OBJECT (stream->pad, "pushing buffer into frag_queue with ts = %"GST_TIME_FORMAT, GST_TIME_ARGS(GST_BUFFER_TIMESTAMP(buf)));
+
+    for (i = 0; i < qtdemux->n_streams; i++) {
+      cstream = qtdemux->streams[i];
+      if (g_queue_is_empty (cstream->frag_queue)) {
+        all_queues_filled = FALSE;
+      }
+    }
+
+    if (all_queues_filled) {
+      /* all stream queues have data */
+      for (i = 0; i < qtdemux->n_streams; i++) {
+        GstBuffer *pop_buf = NULL;
+        cstream = qtdemux->streams[i];
+
+pop_again:
+        pop_buf = g_queue_pop_head (cstream->frag_queue);
+
+        qtdemux->max_pop_ts = GST_BUFFER_TIMESTAMP(pop_buf) > qtdemux->max_pop_ts ?
+          GST_BUFFER_TIMESTAMP(pop_buf) : qtdemux->max_pop_ts;
+
+        GST_DEBUG_OBJECT (cstream->pad,
+            "Pushing buffer with time %" GST_TIME_FORMAT ", duration %"
+            GST_TIME_FORMAT, GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (pop_buf)),
+            GST_TIME_ARGS (GST_BUFFER_DURATION (pop_buf)));
+
+        ret = gst_pad_push (cstream->pad, pop_buf);
+        if (ret != GST_FLOW_OK) {
+          GST_WARNING_OBJECT (cstream->pad, "pad_push returned = %s", gst_flow_get_name (ret));
+          return ret;
+        }
+
+        pop_buf =  g_queue_peek_head (cstream->frag_queue);
+
+        if (pop_buf && (GST_BUFFER_TIMESTAMP(pop_buf) < qtdemux->max_pop_ts)) {
+          GST_LOG_OBJECT (cstream->pad, "pop again next ts = %"GST_TIME_FORMAT" and max_pop_ts = %"GST_TIME_FORMAT,
+            GST_TIME_ARGS(GST_BUFFER_TIMESTAMP (pop_buf)), GST_TIME_ARGS(qtdemux->max_pop_ts));
+          goto pop_again;
+        }
+      }
+    }
+
+    return GST_FLOW_OK;
+  }
+#endif
   GST_LOG_OBJECT (qtdemux,
       "Pushing buffer with time %" GST_TIME_FORMAT ", duration %"
       GST_TIME_FORMAT " on pad %s", GST_TIME_ARGS (GST_BUFFER_TIMESTAMP (buf)),
@@ -4895,12 +5287,22 @@ qtdemux_parse_moov (GstQTDemux * qtdemux, const guint8 * buffer, guint length)
 }
 
 static gboolean
+#ifdef QTDEMUX_MODIFICATION
+qtdemux_parse_container (GstQTDemux * qtdemux, GNode * node, guint8 * buf,
+    const guint8 * end)
+#else
 qtdemux_parse_container (GstQTDemux * qtdemux, GNode * node, const guint8 * buf,
     const guint8 * end)
+#endif
 {
   while (G_UNLIKELY (buf < end)) {
     GNode *child;
     guint32 len;
+#ifdef QTDEMUX_MODIFICATION
+    guint32 fourcc;
+    guint8 i,j;
+    gboolean found_sinf = FALSE;
+#endif
 
     if (G_UNLIKELY (buf + 4 > end)) {
       GST_LOG_OBJECT (qtdemux, "buffer overrun");
@@ -4921,6 +5323,31 @@ qtdemux_parse_container (GstQTDemux * qtdemux, GNode * node, const guint8 * buf,
       break;
     }
 
+#ifdef QTDEMUX_MODIFICATION
+/* Replacing the fourcc value of 'enca' or 'encv' node with the fourcc value of original format stored in 'sinf' node. */
+    fourcc = QT_FOURCC (buf + 4);
+
+    if((fourcc & 0xFFFFFF) == GST_MAKE_FOURCC ('e', 'n', 'c', 0)) {
+      for(i = 0; i < len ; i++) {
+        fourcc = QT_FOURCC(buf + i);
+        if( fourcc == GST_MAKE_FOURCC ('s','i','n','f')) {
+          found_sinf = TRUE;
+          break;
+        }
+      }
+
+      if (!found_sinf) {
+        GST_ERROR_OBJECT (qtdemux, "failed to find sinf for encx format");
+        GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT, ("failed to find sinf atom"), (NULL));
+        return FALSE;
+      }
+
+      fourcc = QT_FOURCC(buf + i +12);
+      GST_LOG_OBJECT(qtdemux,"Original format present in encX node is %"GST_FOURCC_FORMAT , GST_FOURCC_ARGS(fourcc));
+      for(j=0; j<4;j++)
+      buf[4+j] = buf[12 + i + j];
+    }
+#endif
     child = g_node_new ((guint8 *) buf);
     g_node_append (node, child);
     GST_LOG_OBJECT (qtdemux, "adding new node of len %d", len);
@@ -5039,6 +5466,110 @@ qtdemux_parse_node (GstQTDemux * qtdemux, GNode * node, const guint8 * buffer,
         qtdemux_parse_container (qtdemux, node, buffer + 16, end);
         break;
       }
+#ifdef QTDEMUX_MODIFICATION
+      case FOURCC_uuid:
+      {
+        GstByteReader uuid_data;
+        guint32 protection_header_size = 0,ccount=0;
+        guint8 *protection_header_data = NULL;
+        gint64 uuid_offset = 0;
+        int ret = -1;
+        uuid_type_t uuid_type;
+        guint8 *buffer = (guint8 *) node->data;
+        drm_permission_type_e status_perm_type;
+        drm_license_status_e license_status = DRM_LICENSE_STATUS_UNDEFINED;
+        GstQuery *query = NULL;
+        gchar *file_path = NULL;
+        gchar *modified_path = NULL;
+
+        gst_byte_reader_init (&uuid_data, buffer, QT_UINT32 (buffer));
+        uuid_type = qtdemux_get_uuid_type (qtdemux, &uuid_data, &uuid_offset);
+        if (UUID_PROTECTION_HEADER != uuid_type) {
+          GST_WARNING_OBJECT (qtdemux, "Ignoring Wrong UUID...");
+          return TRUE;
+        }
+
+        if (!qtdemux_parse_playready_system_id (qtdemux, &uuid_data)) {
+          GST_ERROR_OBJECT (qtdemux, "not a playready system id..");
+          GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT, (NULL), ("not a valid playready system ID"));
+          return FALSE;
+        }
+
+        query = gst_query_new_uri ();
+        if (!gst_pad_peer_query (qtdemux->sinkpad, query)) {
+          GST_ERROR_OBJECT (qtdemux, "failed to query URI from upstream");
+          GST_ELEMENT_ERROR (qtdemux, CORE, FAILED, (NULL), ("failed to get uri from upstream"));
+          gst_query_unref (query);
+          return FALSE;
+        }
+        gst_query_parse_uri (query, &file_path);
+
+        gst_query_unref (query);
+        query = NULL;
+
+        if (g_str_has_prefix (file_path, "file://")) {
+          modified_path = file_path + 7;
+        } else {
+          modified_path = file_path;
+        }
+
+        GST_INFO_OBJECT (qtdemux, "file path : %s", file_path);
+        GST_INFO_OBJECT (qtdemux, "modified path : %s", modified_path);
+
+        status_perm_type = DRM_PERMISSION_TYPE_PLAY;
+        ret = drm_get_license_status (modified_path, status_perm_type, &license_status);
+        if (DRM_RETURN_SUCCESS != ret) {
+          GST_ERROR_OBJECT (qtdemux, "failed to get license status : 0x%x", ret);
+          qtdemux_post_drm_error (qtdemux, DRM_LICENSE_STATUS_UNDEFINED);
+          g_free (file_path);
+          return FALSE;
+        }
+
+        g_free (file_path);
+
+        if (DRM_LICENSE_STATUS_VALID != license_status) {
+          qtdemux_post_drm_error (qtdemux, license_status);
+          return FALSE;
+        }
+
+        GST_DEBUG_OBJECT (qtdemux, "successfully got the license status..");
+
+        /* Enters into if body when valid system ID is present.*/
+        gst_byte_reader_get_uint32_be (&uuid_data, &protection_header_size);
+        gst_byte_reader_skip (&uuid_data, 10);
+        protection_header_size = protection_header_size - 10;
+
+        GST_DEBUG_OBJECT(qtdemux,"protection header size: %d ", protection_header_size);
+
+        if (!gst_byte_reader_dup_data(&uuid_data, protection_header_size , &protection_header_data)) {
+          GST_ERROR_OBJECT (qtdemux, "failed to duplicate bytereader data...");
+          GST_ELEMENT_ERROR (qtdemux, RESOURCE, NO_SPACE_LEFT, (NULL), ("failed to allocate memory"));
+          return FALSE;
+        }
+        /* for adding wchar null check */
+        protection_header_size = protection_header_size + 2;
+
+        protection_header_data = (guint8 *) realloc (protection_header_data,protection_header_size);
+        if (!protection_header_data) {
+          GST_ERROR_OBJECT (qtdemux, "failed to allocate memory...");
+          GST_ELEMENT_ERROR (qtdemux, RESOURCE, NO_SPACE_LEFT, (NULL), ("failed to allocate memory"));
+          return FALSE;
+        }
+
+        /* adding wchar null character */
+        protection_header_data[protection_header_size-2] = '\0';
+        protection_header_data[protection_header_size-1] = '\0';
+
+        GST_DEBUG_OBJECT(qtdemux,"protection header size: %d ", protection_header_size);
+
+        /* FIXME : Get license key & open decrypt session */
+        qtdemux->encrypt_content = TRUE;
+
+        free (protection_header_data);
+        /* iterate all siblings */
+        break;
+      }
+#endif
       case FOURCC_mp4a:
       case FOURCC_alac:
       {
@@ -6594,6 +7125,9 @@ qtdemux_parse_trak (GstQTDemux * qtdemux, GNode * trak)
   stream->trickplay_info->next_kidx = 0;
   stream->trickplay_info->kidxs_dur_diff = 0;
   stream->orientation = -1;
+  stream->prev_n_samples=0;
+  if (qtdemux->piff_fragmented)
+    stream->frag_queue = g_queue_new ();
 #endif
   if (!qtdemux_tree_get_child_by_type_full (trak, FOURCC_tkhd, &tkhd)
       || !gst_byte_reader_get_uint8 (&tkhd, &tkhd_version)
@@ -6794,9 +7328,12 @@ qtdemux_parse_trak (GstQTDemux * qtdemux, GNode * trak)
   stream->fourcc = fourcc = QT_FOURCC (stsd_data + 16 + 4);
   GST_LOG_OBJECT (qtdemux, "stsd type:          %" GST_FOURCC_FORMAT,
       GST_FOURCC_ARGS (stream->fourcc));
-
+#ifdef QTDEMUX_MODIFICATION
+  if ((fourcc == FOURCC_drms) || (fourcc == FOURCC_drmi) )
+#else
   if ((fourcc == FOURCC_drms) || (fourcc == FOURCC_drmi) ||
       ((fourcc & 0xFFFFFF00) == GST_MAKE_FOURCC ('e', 'n', 'c', 0)))
+#endif
     goto error_encrypted;
 
   if (stream->subtype == FOURCC_vide) {
@@ -10267,6 +10804,113 @@ beach:
       "gave %d", index, new_index);
 
   return new_index;
+}
+
+/* Find out which uuid type is present in uuid node.
+    and returns uuid_type present in uuid node.*/
+
+static uuid_type_t
+qtdemux_get_uuid_type(GstQTDemux * qtdemux, GstByteReader *uuid_data, gint64 *uuid_offset)
+{
+  uuid_type_t uuid_type = UUID_UNKNOWN;
+  guint32 box_len = 0;
+  guint64 box_long_len = 0;
+  gchar uuid[16] = {0,};
+  int i = 0;
+
+  if (!gst_byte_reader_get_uint32_be (uuid_data, &box_len))
+    goto invalid_uuid;
+
+  /* Skipping fourcc */
+  if (!gst_byte_reader_skip (uuid_data, 4))
+    goto invalid_uuid;
+  if (box_len == 1) {
+    GST_WARNING_OBJECT (qtdemux, "TfxdBoxLongLength field is present...");
+    if (!gst_byte_reader_get_uint64_be (uuid_data, &box_long_len))
+      goto invalid_uuid;
+
+    GST_DEBUG_OBJECT (qtdemux, "tfxd long length = %llu", box_long_len);
+
+    *uuid_offset = box_long_len;
+  } else {
+    GST_DEBUG_OBJECT (qtdemux, "Box Len = %d", (box_len));
+    *uuid_offset = box_len;
+  }
+
+  for (i = 0; i < sizeof (uuid); i++) {
+    if (!gst_byte_reader_get_uint8 (uuid_data, &(uuid[i])))
+      goto invalid_uuid;
+  }
+
+  if (!memcmp(uuid, tfxd_uuid, sizeof (uuid_t))) {
+    GST_INFO_OBJECT (qtdemux, "Found TFXD box");
+    return UUID_TFXD;
+  } else if (!memcmp(uuid, tfrf_uuid, sizeof (uuid_t))) {
+    GST_INFO_OBJECT (qtdemux, "Found TFRF box");
+    return UUID_TFRF;
+  } else if (!memcmp(uuid, encrypt_uuid, sizeof (uuid_t))) {
+    GST_INFO_OBJECT (qtdemux,"Found sample encryption box");
+    return UUID_SAMPLE_ENCRYPT;
+  } else if (!memcmp(uuid, protection_uuid, sizeof (uuid_t))) {
+    GST_INFO_OBJECT (qtdemux,"Found protection header box");
+    return UUID_PROTECTION_HEADER;
+  } else {
+    GST_WARNING_OBJECT (qtdemux, "Not an valid UUID box..");
+    goto invalid_uuid;
+  }
+
+invalid_uuid:
+  GST_ERROR_OBJECT (qtdemux, "Error in parsing UUID atom...");
+  return UUID_UNKNOWN;
+}
+
+/*Authenticating whether valid play ready system ID is present in uuid node or not.*/
+
+static gboolean
+qtdemux_parse_playready_system_id(GstQTDemux * qtdemux, GstByteReader *uuid_data)
+{
+  gchar uuid[16] = {0,};
+  guint i;
+  if (!gst_byte_reader_skip (uuid_data, 4))
+    goto invalid_uuid;
+
+  for (i = 0; i < sizeof (uuid); i++){
+    if (!gst_byte_reader_get_uint8 (uuid_data, &(uuid[i])))
+      goto invalid_uuid;
+  }
+
+  if (!memcmp(uuid, playready_system_id, sizeof (uuid_t))){
+    GST_INFO_OBJECT (qtdemux, "Found Play Ready System ID");
+    return TRUE;
+  }
+
+invalid_uuid:
+  GST_ERROR_OBJECT (qtdemux, "Invalid system ID...");
+  return FALSE;
+}
+
+static void
+qtdemux_post_drm_error (GstQTDemux * qtdemux, int drm_error)
+{
+  switch (drm_error) {
+    case DRM_LICENSE_STATUS_EXPIRED:
+    GST_ERROR_OBJECT (qtdemux, "posting error as rights expired");
+    GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT_NOKEY, ("rights expired"), (NULL));
+    break;
+    case DRM_LICENSE_STATUS_NO_LICENSE:
+    GST_ERROR_OBJECT (qtdemux, "posting error as no rights");
+    GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT_NOKEY, ("no rights"), (NULL));
+    break;
+    case DRM_LICENSE_STATUS_FUTURE_USE:
+    GST_ERROR_OBJECT (qtdemux, "posting error as rights for future");
+    GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT_NOKEY, ("has future rights"), (NULL));
+    break;
+    case DRM_LICENSE_STATUS_UNDEFINED:
+    default:
+    GST_ERROR_OBJECT (qtdemux, "posting error as undefined");
+    GST_ELEMENT_ERROR (qtdemux, STREAM, DECRYPT_NOKEY, ("undefind error"), (NULL));
+    break;
+  }
 }
 
 #endif

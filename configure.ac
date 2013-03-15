@@ -385,6 +385,9 @@ AG_GST_CHECK_PLUGIN(wavenc)
 AG_GST_CHECK_PLUGIN(wavparse)
 AG_GST_CHECK_PLUGIN(y4m)
 
+PKG_CHECK_MODULES(DRM_CLIENT, drm-client)
+AC_SUBST(DRM_CLIENT_CFLAGS)
+AC_SUBST(DRM_CLIENT_LIBS)
 dnl *** checks for socket and nsl libraries ***
 AC_CHECK_FUNC(socket,,[AC_CHECK_LIB(socket,socket)])
 

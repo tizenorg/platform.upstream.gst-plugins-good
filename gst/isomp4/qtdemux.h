@@ -28,6 +28,8 @@
 
 #ifdef QTDEMUX_MODIFICATION
 #include <stdio.h>
+#include <drm_client.h>
+#include <drm_client_types.h>
 #endif
 
 G_BEGIN_DECLS
@@ -126,6 +128,9 @@ struct _GstQTDemux {
   guint filesize;
   guint maxbuffersize;
   gboolean fwdtrick_mode;
+  gboolean encrypt_content;
+  gboolean piff_fragmented;
+  GstClockTime max_pop_ts;
 #endif
 };
 
