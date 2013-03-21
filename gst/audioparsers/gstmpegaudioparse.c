@@ -1401,9 +1401,24 @@ gst_mpeg_audio_parse_src_eventfunc (GstBaseParse * parse, GstEvent * event)
         guint64 second_count = 0;	/* initial 1 second */
         gint64 total_file_size = 0, start_offset = 0;
         GstClockTime current_ts = GST_CLOCK_TIME_NONE;
+        GstActivateMode pad_mode = GST_ACTIVATE_NONE;
+        gint64 encoded_file_size = 0;
 
 #ifdef GST_EXT_BASEPARSER_MODIFICATION /* check baseparse define these fuction */
+        gst_base_parse_get_pad_mode(parse, &pad_mode);
+        if (pad_mode != GST_ACTIVATE_PULL) {
+          GST_INFO_OBJECT (parse, "mp3 parser is not pull mode. mp3 parser can not make index table.");
+          return FALSE;
+        }
+
         gst_base_parse_get_upstream_size(parse, &total_file_size);
+        gst_base_parse_get_encoded_size(parse, &encoded_file_size);
+        if (total_file_size > encoded_file_size) {
+          GST_INFO_OBJECT(parse, "[SEEK_EVENT] total_file_size (%"G_GINT64_FORMAT")= encoded_file_size(%"G_GINT64_FORMAT")+ ID3(%"G_GINT64_FORMAT")",
+                          total_file_size, encoded_file_size, (total_file_size - encoded_file_size) );
+          total_file_size =  encoded_file_size;
+         }
+
         gst_base_parse_get_index_last_offset(parse, &start_offset);
         gst_base_parse_get_index_last_ts(parse, &current_ts);
 #else
