@@ -1,41 +1,41 @@
 Name:           gst-plugins-good
 Version:        1.0.5
 Release:        1
+License:        LGPL-2.1+
 %define gst_branch 1.0
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
-License:        LGPL-2.1+
-Group:          Productivity/Multimedia/Other
 Url:            http://gstreamer.freedesktop.org/
+Group:          Multimedia/Multimedia Framework
 Source0:        http://download.gnome.org/sources/gst-plugins-good/1.0/%{name}-%{version}.tar.xz
 BuildRequires:  gcc-c++
+BuildRequires:  gettext-tools
 BuildRequires:  glib2-devel >= 2.31.14
 BuildRequires:  gstreamer-devel >= 1.0.0
-BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
-BuildRequires:  libICE-devel
-BuildRequires:  libSM-devel
-# used by libgstvideo4linux2.so
-BuildRequires:  libXv-devel
-BuildRequires:  bzip2-devel
 BuildRequires:  libjpeg-devel
 BuildRequires:  orc >= 0.4.16
 BuildRequires:  python
-BuildRequires:  gettext-tools
-# TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
-BuildRequires:  zlib-devel
-BuildRequires:  pkgconfig(cairo) >= 1.0.0
 BuildRequires:  xsltproc
+BuildRequires:  pkgconfig(bzip2)
+BuildRequires:  pkgconfig(cairo) >= 1.0.0
 BuildRequires:  pkgconfig(cairo-gobject) >= 1.10.0
+BuildRequires:  pkgconfig(flac)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0) >= 2.8.0
+BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
+BuildRequires:  pkgconfig(ice)
 BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
+BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(libxml-2.0) >= 2.4.9
+BuildRequires:  pkgconfig(sm)
 BuildRequires:  pkgconfig(speex) >= 1.1.6
+BuildRequires:  pkgconfig(vpx) >= 1.1.0
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
-BuildRequires:  pkgconfig(libsoup-2.4)
-BuildRequires:  pkgconfig(flac)
-BuildRequires:  pkgconfig(vpx) >= 1.1.0
+# used by libgstvideo4linux2.so
+BuildRequires:  pkgconfig(xv)
+# TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
+BuildRequires:  pkgconfig(zlib)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.5
 
@@ -45,7 +45,6 @@ that operate on media data. Applications using this library can do
 anything media-related, from real-time sound processing to playing
 videos. Its plug-in-based architecture means that new data types or
 processing capabilities can be added simply by installing new plug-ins.
-
 
 %package extra
 Summary:        Complementary plugins for %{name}
@@ -58,8 +57,8 @@ This package provides complementary plugins for
 %{name}.
 
 %prep
-chmod 0644 %{S:0}
-%setup -q -n %{name}-%{version}
+chmod 0644 %{SOURCE0}
+%setup -q
 
 %build
 # FIXME:
@@ -72,17 +71,13 @@ chmod 0644 %{S:0}
 	--disable-gtk-doc\
 	--with-gtk=3.0\
 	--enable-experimental
-make %{?jobs:-j%jobs}
+make %{?_smp_mflags}
 
 %install
 %make_install
 %find_lang %{name}-%{gst_branch}
-mv %{name}-%{gst_branch}.lang %{name}.lang
 
-%lang_package
-
-%clean
-rm -rf $RPM_BUILD_ROOT
+%lang_package -f %{name}-%{gst_branch}
 
 %files
 %defattr(-, root, root)
