@@ -803,10 +803,6 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
   goffset start = 0, end = 0, total_length = 0;
 #endif
   GHashTable *params = NULL;
-#ifdef GST_EXT_SOUP_MODIFICATION
-  gint idx = 0;
-  const char* blackTypes[] = {"application/xml", "text/html"};
-#endif
 
   GST_DEBUG_OBJECT (src, "got headers:");
   soup_message_headers_foreach (msg->response_headers,
@@ -891,16 +887,6 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
           soup_message_headers_get_content_type (msg->response_headers,
               &params)) != NULL) {
     GST_DEBUG_OBJECT (src, "Content-Type: %s", value);
-
-#ifdef GST_EXT_SOUP_MODIFICATION
-    for (idx = 0; idx < (sizeof(blackTypes) / sizeof(char *)); idx++) {
-      if (!g_ascii_strcasecmp(value, blackTypes[idx])) {
-        GST_DEBUG_OBJECT (src, "blackType: %s", blackTypes[idx]);
-        GST_ELEMENT_ERROR(src, STREAM, WRONG_TYPE, (0), (0));
-        src->ret = GST_FLOW_ERROR;
-      }
-    }
-#endif
 
     if (g_ascii_strcasecmp (value, "audio/L16") == 0) {
       gint channels = 2;
