@@ -234,6 +234,7 @@ gst_mpeg_audio_parse_reset (GstMpegAudioParse * mp3parse)
 
   mp3parse->encoder_delay = 0;
   mp3parse->encoder_padding = 0;
+  mp3parse->encoded_file_size = 0;
 }
 
 static void
@@ -633,6 +634,8 @@ gst_mpeg_audio_parse_handle_first_frame (GstMpegAudioParse * mp3parse,
   if (!gst_pad_query_peer_duration (GST_BASE_PARSE_SINK_PAD (GST_BASE_PARSE
               (mp3parse)), &fmt, &upstream_total_bytes))
     upstream_total_bytes = 0;
+    GST_INFO_OBJECT (mp3parse, "gst_pad_query_peer_duration -upstream_total_bytes (%"G_GUINT64_FORMAT")", upstream_total_bytes);
+    mp3parse->encoded_file_size = upstream_total_bytes;
 
   if (read_id_xing == xing_id || read_id_xing == info_id) {
     guint32 xing_flags;
@@ -987,6 +990,9 @@ gst_mpeg_audio_parse_parse_frame (GstBaseParse * parse,
   guint bitrate, layer, rate, channels, version, mode, crc;
 
   g_return_val_if_fail (GST_BUFFER_SIZE (buf) >= 4, GST_FLOW_ERROR);
+  if(GST_BUFFER_SIZE (buf) <  4) {
+    GST_INFO_OBJECT (parse, "_parse_parse_frame() :  buffer->size(%d)",GST_BUFFER_SIZE (buf));
+  }
 
   if (!mp3_type_frame_length_from_header (mp3parse,
           GST_READ_UINT32_BE (GST_BUFFER_DATA (buf)),
@@ -1402,34 +1408,43 @@ gst_mpeg_audio_parse_src_eventfunc (GstBaseParse * parse, GstEvent * event)
         gint64 total_file_size = 0, start_offset = 0;
         GstClockTime current_ts = GST_CLOCK_TIME_NONE;
         GstActivateMode pad_mode = GST_ACTIVATE_NONE;
-        gint64 encoded_file_size = 0;
+
+        GST_DEBUG("gst_mpeg_audio_parse_src_eventfunc GST_EVENT_SEEK enter");
+
+        if(mp3parse->xing_frames > 0 &&  mp3parse->xing_bytes > 0) {
+          GST_INFO_OBJECT (mp3parse, "[SEEK] Xing header reported %u frames, time %"
+                                                 GST_TIME_FORMAT ", %u bytes, vbr scale %u", mp3parse->xing_frames,
+                                                 GST_TIME_ARGS (mp3parse->xing_total_time), mp3parse->xing_bytes,
+                                                 mp3parse->xing_vbr_scale);
+          GST_INFO_OBJECT (mp3parse, "[SEEK] Xing header FOUND - we don't need SEEK TBL");  
+          break;
+         }
+        GST_INFO_OBJECT (mp3parse, "[SEEK] Xing header NOT FOUND - need SEEK TBL");
 
 #ifdef GST_EXT_BASEPARSER_MODIFICATION /* check baseparse define these fuction */
         gst_base_parse_get_pad_mode(parse, &pad_mode);
         if (pad_mode != GST_ACTIVATE_PULL) {
-          GST_INFO_OBJECT (parse, "mp3 parser is not pull mode. mp3 parser can not make index table.");
+          GST_INFO_OBJECT (mp3parse, "mp3 parser is not pull mode. mp3 parser can not make index table.");
           return FALSE;
         }
-
         gst_base_parse_get_upstream_size(parse, &total_file_size);
-        gst_base_parse_get_encoded_size(parse, &encoded_file_size);
-        if (total_file_size > encoded_file_size) {
-          GST_INFO_OBJECT(parse, "[SEEK_EVENT] total_file_size (%"G_GINT64_FORMAT")= encoded_file_size(%"G_GINT64_FORMAT")+ ID3(%"G_GINT64_FORMAT")",
-                          total_file_size, encoded_file_size, (total_file_size - encoded_file_size) );
-          total_file_size =  encoded_file_size;
-         }
-
         gst_base_parse_get_index_last_offset(parse, &start_offset);
         gst_base_parse_get_index_last_ts(parse, &current_ts);
+
+        if (mp3parse->encoded_file_size > 0) {
+          GST_INFO_OBJECT(parse, "[SEEK] total_file_size (%"G_GINT64_FORMAT")= encoded_file_size(%"G_GINT64_FORMAT")+ ID3(%"G_GINT64_FORMAT")",
+                                            total_file_size,  mp3parse->encoded_file_size, (total_file_size -  mp3parse->encoded_file_size) );
+          total_file_size =  mp3parse->encoded_file_size;
+        } else {
+          GST_INFO_OBJECT(parse, "[SEEK] encoded_file_siz (%"G_GINT64_FORMAT") is WRONG", mp3parse->encoded_file_size );
+        }
 #else
         GST_ERROR("baseparser does not define get private param functions. can not make index table here.");
         break;
 #endif
 
-        GST_DEBUG("gst_mpeg_audio_parse_src_eventfunc GST_EVENT_SEEK enter");
-
         if (total_file_size == 0 || start_offset >= total_file_size) {
-          GST_ERROR("last index offset %d is larger than file size %d", start_offset, total_file_size);
+          GST_ERROR("last index offset (%"G_GUINT64_FORMAT") is larger than file size (%"G_GUINT64_FORMAT")", start_offset, total_file_size);
           break;
         }
 
