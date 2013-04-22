@@ -114,6 +114,10 @@ enum
   PROP_IRADIO_URL,
   PROP_IRADIO_TITLE,
   PROP_TIMEOUT,
+#ifdef GST_EXT_SOUP_MODIFICATION
+  PROP_CONTENT_SIZE,
+  PROP_AHS_STREAMING,
+#endif
 #ifdef SEEK_CHANGES
   PROP_EXTRA_HEADERS,
   PROP_BLOCKSIZE,
@@ -280,6 +284,20 @@ gst_soup_http_src_class_init (GstSoupHTTPSrcClass * klass)
           "Size of each buffer downloaded from libsoup",
           -1, G_MAXUINT, 4096, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 #endif
+
+#ifdef GST_EXT_SOUP_MODIFICATION
+  g_object_class_install_property (gobject_class, PROP_CONTENT_SIZE,
+      g_param_spec_uint64 ("content-size", "contentsize",
+          "Total size of the content under download",
+          0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_class,
+      PROP_AHS_STREAMING,
+      g_param_spec_boolean ("ahs-streaming", "adaptive HTTP Streaming",
+          "set whether adaptive HTTP streaming(HLS/SS/DASH) or not ",
+          FALSE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+#endif
+
   /* icecast stuff */
   g_object_class_install_property (gobject_class,
       PROP_IRADIO_MODE,
@@ -334,7 +352,9 @@ gst_soup_http_src_reset (GstSoupHTTPSrc * src)
   src->read_position = 0;
   src->request_position = 0;
   src->content_size = 0;
-
+#ifdef GST_EXT_SOUP_MODIFICATION
+  src->content_len = 0;
+#endif
 #ifdef SEEK_CHANGES
   src->file_size = 0;
 #endif
@@ -377,6 +397,9 @@ gst_soup_http_src_init (GstSoupHTTPSrc * src, GstSoupHTTPSrcClass * g_class)
         "The proxy in the http_proxy env var (\"%s\") cannot be parsed.",
         proxy);
   }
+#ifdef GST_EXT_SOUP_MODIFICATION
+  src->is_ahs_streaming = FALSE;
+#endif
 
   gst_soup_http_src_reset (src);
 }
@@ -469,6 +492,11 @@ gst_soup_http_src_set_property (GObject * object, guint prop_id,
 #endif
       break;
     }
+#ifdef GST_EXT_SOUP_MODIFICATION
+    case PROP_AHS_STREAMING:
+      src->is_ahs_streaming = g_value_get_boolean (value);
+      break;
+#endif
     case PROP_IS_LIVE:
       gst_base_src_set_live (GST_BASE_SRC (src), g_value_get_boolean (value));
       break;
@@ -571,6 +599,11 @@ gst_soup_http_src_get_property (GObject * object, guint prop_id,
     case PROP_IRADIO_MODE:
       g_value_set_boolean (value, src->iradio_mode);
       break;
+#ifdef GST_EXT_SOUP_MODIFICATION
+    case PROP_AHS_STREAMING:
+      g_value_set_boolean (value, src->is_ahs_streaming);
+      break;
+#endif
     case PROP_IRADIO_NAME:
       g_value_set_string (value, src->iradio_name);
       break;
@@ -605,6 +638,11 @@ gst_soup_http_src_get_property (GObject * object, guint prop_id,
     case PROP_BLOCKSIZE:
 	  g_value_set_int64 (value, src->range_size);
 	  break;
+#endif
+#ifdef GST_EXT_SOUP_MODIFICATION
+    case PROP_CONTENT_SIZE:
+      g_value_set_uint64 (value, src->content_len);
+      break;
 #endif
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -651,13 +689,22 @@ gst_soup_http_src_add_range_header (GstSoupHTTPSrc * src, guint64 offset)
   soup_message_headers_remove (src->msg->request_headers, "Range");
 
 #ifdef GST_EXT_SOUP_MODIFICATION
-  /* Note : Some http server could not handle Range header in the middle of playing.
-   *    Need to add Range header at first for seeking properly.
-   */
-  rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-", offset);
-  if (rc > sizeof (buf) || rc < 0)
-    return FALSE;
-  soup_message_headers_append (src->msg->request_headers, "Range", buf);
+  if (!src->is_ahs_streaming) {
+    /* Note : Some http server could not handle Range header in the middle of playing.
+     *    Need to add Range header at first for seeking properly.
+     */
+    rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-", offset);
+    if (rc > sizeof (buf) || rc < 0)
+      return FALSE;
+    soup_message_headers_append (src->msg->request_headers, "Range", buf);
+  } else {
+    if (offset) {
+      rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-", offset);
+      if (rc > sizeof (buf) || rc < 0)
+        return FALSE;
+      soup_message_headers_append (src->msg->request_headers, "Range", buf);
+    }
+  }
 #else
   if (offset) {
     rc = g_snprintf (buf, sizeof (buf), "bytes=%" G_GUINT64_FORMAT "-", offset);
@@ -698,6 +745,33 @@ _append_extra_header (GQuark field_id, const GValue * value, gpointer user_data)
       field_content);
   soup_message_headers_append (src->msg->request_headers, field_name,
       field_content);
+#ifdef GST_EXT_SOUP_MODIFICATION
+  if (!g_ascii_strcasecmp(field_name, "Cookie")) {
+    SoupURI *uri = NULL;
+    SoupCookie *cookie_parsed = NULL;
+
+    if (strlen(field_content) > 0) {
+      gchar *tmp_field = NULL;
+
+      uri = soup_uri_new (src->location);
+
+      tmp_field = strtok (field_content, ";");
+
+      while (tmp_field != NULL) {
+        GST_DEBUG_OBJECT (src, "field_content = %s", tmp_field);
+
+        cookie_parsed = soup_cookie_parse(tmp_field, uri);
+        GST_DEBUG_OBJECT (src, "cookie parsed = %p", cookie_parsed);
+ 
+        if (src->cookie_jar)
+          soup_cookie_jar_add_cookie (src->cookie_jar, cookie_parsed);
+
+        tmp_field = strtok (NULL, ";");
+      }
+      soup_uri_free (uri);
+    }
+  }
+#endif
 
   g_free (field_content);
 
@@ -842,7 +916,9 @@ gst_soup_http_src_got_headers_cb (SoupMessage * msg, GstSoupHTTPSrc * src)
       src->have_size = TRUE;
       src->seekable = TRUE;
       GST_DEBUG_OBJECT (src, "size = %" G_GUINT64_FORMAT, src->content_size);
-
+#ifdef GST_EXT_SOUP_MODIFICATION
+      src->content_len = src->content_size;
+#endif
       basesrc = GST_BASE_SRC_CAST (src);
       gst_segment_set_duration (&basesrc->segment, GST_FORMAT_BYTES,
           src->content_size);
@@ -1579,6 +1655,38 @@ gst_soup_http_src_query (GstBaseSrc * bsrc, GstQuery * query)
       gst_query_set_uri (query, src->location);
       ret = TRUE;
       break;
+#ifdef GST_EXT_SOUP_MODIFICATION
+    case GST_QUERY_CUSTOM: {
+        GstStructure *s;
+        s = gst_query_get_structure (query);
+        if (gst_structure_has_name (s, "HTTPCookies")) {
+          GSList *cookie_list, *c;
+          gchar **cookies, **array;
+          GValue value = { 0, { { 0 } } };
+
+          g_value_init (&value, G_TYPE_STRV);
+          cookies = NULL;
+          if ((cookie_list = soup_cookie_jar_all_cookies (src->cookie_jar)) != NULL) {
+            cookies = g_new0 (gchar *, g_slist_length(cookie_list) + 1);
+            array = cookies;
+            for (c = cookie_list; c; c = c->next) {
+              *array++ = soup_cookie_to_set_cookie_header ((SoupCookie *)(c->data));
+            }
+            soup_cookies_free (cookie_list);
+          }
+          g_value_set_boxed (&value, cookies);
+	
+          GST_INFO_OBJECT (src, "Received supported custom query");
+          gst_structure_set_value (s, "cookies", &value);
+          ret = TRUE;
+        } else {
+          GST_WARNING_OBJECT (src,"Unsupported query");
+          ret = FALSE;
+        }
+      }
+      break;
+#endif
+
     default:
       ret = FALSE;
       break;

@@ -92,6 +92,8 @@ struct _GstSoupHTTPSrc {
   guint timeout;
 #ifdef GST_EXT_SOUP_MODIFICATION
   SoupCookieJar *cookie_jar;
+  guint64 content_len;
+  gboolean is_ahs_streaming; /* adaptive HTTP Streaming : HLS/SS/DASH */
 #endif
 };
 
