@@ -576,6 +576,9 @@ gst_mpeg_audio_parse_check_valid_frame (GstBaseParse * parse,
   gst_base_parse_set_min_frame_size (parse, MIN_FRAME_SIZE);
 
   *framesize = bpf;
+
+  mp3parse->frame_byte = bpf;
+
   return TRUE;
 }
 
@@ -1382,12 +1385,107 @@ static guint
      return length;
  }
 
+#ifdef GST_EXT_BASEPARSER_MODIFICATION
+/* perform seek in push based mode:
+   find BYTE position to move to based on time and delegate to upstream
+*/
+static gboolean
+gst_mpeg_audio_parse_do_push_seek (GstBaseParse * parse, GstPad * pad, GstEvent * event)
+{
+  GstMpegAudioParse *mp3parse;
+  mp3parse = GST_MPEG_AUDIO_PARSE (parse); 
+
+  gdouble rate;
+  GstFormat format;
+  GstSeekFlags flags;
+  GstSeekType cur_type, stop_type;
+  gint64 cur, stop;
+  gboolean res;
+  gint64 byte_cur;
+  gint64 esimate_byte;
+  gint32 frame_dur;
+
+  GST_INFO_OBJECT (parse, "doing push-based seek");
+
+  gst_event_parse_seek (event, &rate, &format, &flags, &cur_type, &cur, &stop_type, &stop);
+
+  /* FIXME, always play to the end */
+  stop = -1;
+
+  /* only forward streaming and seeking is possible */
+  if (rate <= 0)
+    goto unsupported_seek;
+
+  if ( cur == 0 ) {
+    /* handle rewind only */
+    cur_type = GST_SEEK_TYPE_SET;
+    byte_cur = 0;
+    stop_type = GST_SEEK_TYPE_NONE;
+    stop = -1;
+    flags |= GST_SEEK_FLAG_FLUSH;
+  } else {
+    /* handle normal seek */
+    cur_type = GST_SEEK_TYPE_SET;
+    stop_type = GST_SEEK_TYPE_NONE;
+    stop = -1;
+    flags |= GST_SEEK_FLAG_FLUSH;
+
+    esimate_byte = (cur / (1000 * 1000)) * mp3parse->frame_byte;
+    if (mp3parse->rate > 0)
+      frame_dur = (mp3parse->spf * 1000) / mp3parse->rate;
+    else
+      goto unsupported_seek;
+    if (frame_dur > 0)
+      byte_cur =  esimate_byte / (frame_dur);
+    else
+      goto unsupported_seek;
+
+    GST_INFO_OBJECT(parse, "frame_byte(%d) spf(%d)  rate (%d) ", mp3parse->frame_byte, mp3parse->spf, mp3parse->rate);
+    GST_INFO_OBJECT(parse, "seek cur (%"G_GINT64_FORMAT") = (%"GST_TIME_FORMAT") ", cur, GST_TIME_ARGS (cur));
+    GST_INFO_OBJECT(parse, "esimate_byte(%"G_GINT64_FORMAT")  esimate_byte (%d)", esimate_byte, frame_dur );
+  }
+
+  if ( (byte_cur == -1) || (byte_cur > mp3parse->encoded_file_size))
+  {
+    GST_INFO_OBJECT(parse, "[WEB-ERROR] seek cur (%"G_GINT64_FORMAT") > file_size (%"G_GINT64_FORMAT") ", cur, mp3parse->encoded_file_size );
+    goto abort_seek;
+  }
+  GST_INFO_OBJECT (parse, "Pushing BYTE seek rate %g, "  "start %" G_GINT64_FORMAT ", stop %" G_GINT64_FORMAT, rate, byte_cur,  stop);
+
+  if (!(flags & GST_SEEK_FLAG_KEY_UNIT)) {
+    GST_INFO_OBJECT (parse, "Requested seek time: %" GST_TIME_FORMAT ", calculated seek offset: %" G_GUINT64_FORMAT, GST_TIME_ARGS (cur), byte_cur);
+  }
+
+  /* BYTE seek event */
+  event = gst_event_new_seek (rate, GST_FORMAT_BYTES, flags, cur_type, byte_cur, stop_type, stop);
+  res = gst_pad_push_event (parse->sinkpad, event);
+
+  return res;
+
+  /* ERRORS */
+abort_seek:
+  {
+    GST_DEBUG_OBJECT (parse, "could not determine byte position to seek to, " "seek aborted.");
+    return FALSE;
+  }
+unsupported_seek:
+  {
+    GST_DEBUG_OBJECT (parse, "unsupported seek, seek aborted.");
+    return FALSE;
+  }
+no_format:
+  {
+    GST_DEBUG_OBJECT (parse, "unsupported format given, seek aborted.");
+    return FALSE;
+  }
+}
+#endif
 
 /**
  * gst_mpeg_audio_parse_src_eventfunc:
  * @parse: #GstBaseParse. #event
  *
- * before baseparse handles seek event, make full amr index table.
+ * before baseparse handles seek event, make full mp3 index table.
  *
  * Returns: TRUE on success.
  */
@@ -1424,8 +1522,13 @@ gst_mpeg_audio_parse_src_eventfunc (GstBaseParse * parse, GstEvent * event)
 #ifdef GST_EXT_BASEPARSER_MODIFICATION /* check baseparse define these fuction */
         gst_base_parse_get_pad_mode(parse, &pad_mode);
         if (pad_mode != GST_ACTIVATE_PULL) {
-          GST_INFO_OBJECT (mp3parse, "mp3 parser is not pull mode. mp3 parser can not make index table.");
-          return FALSE;
+          gboolean ret = FALSE;
+          GST_INFO_OBJECT (mp3parse, "mp3 parser is PUSH MODE.");
+          GstPad* srcpad = gst_element_get_pad(parse, "src");
+          /* check NULL */
+          ret = gst_mpeg_audio_parse_do_push_seek(parse, srcpad, event);
+          gst_object_unref(srcpad);
+          return ret;
         }
         gst_base_parse_get_upstream_size(parse, &total_file_size);
         gst_base_parse_get_index_last_offset(parse, &start_offset);

@@ -65,6 +65,9 @@ struct _GstMpegAudioParse {
   guint32 		frame_duration;                        /* added - duration per frame (msec) */
   guint32 		frame_per_sec;                        /* added - frames per second (ea) */
   gint64           encoded_file_size;
+  guint32 		frame_byte;
+
+  
   gboolean     sent_codec_tag;
   guint        last_posted_bitrate;
   gint         last_posted_crc, last_crc;
