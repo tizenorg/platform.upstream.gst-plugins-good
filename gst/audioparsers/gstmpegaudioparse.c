@@ -1473,11 +1473,6 @@ unsupported_seek:
     GST_DEBUG_OBJECT (parse, "unsupported seek, seek aborted.");
     return FALSE;
   }
-no_format:
-  {
-    GST_DEBUG_OBJECT (parse, "unsupported format given, seek aborted.");
-    return FALSE;
-  }
 }
 #endif
 

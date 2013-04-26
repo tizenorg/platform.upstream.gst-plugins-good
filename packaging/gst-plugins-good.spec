@@ -2,7 +2,7 @@
 Name:       gst-plugins-good
 Summary:    GStreamer plugins from the "good" set
 Version:    0.10.31
-Release:    25
+Release:    26
 Group:      Applications/Multimedia
 License:    LGPLv2+
 Source0:    %{name}-%{version}.tar.gz
