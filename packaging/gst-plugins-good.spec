@@ -1,7 +1,7 @@
 #sbs-git:slp/pkgs/g/gst-plugins-good0.10 gst-plugins-good 0.10.31 6e8625ba6fe94fb9d09e6c3be220b54ffaa01273
 Name:       gst-plugins-good
 Summary:    GStreamer plugins from the "good" set
-Version:    0.10.31
+Version:    0.10.32
 Release:    26
 Group:      Applications/Multimedia
 License:    LGPLv2+
