@@ -78,7 +78,7 @@ export CFLAGS+=" -Wall -g -fPIC\
  --disable-deinterlace\
  --disable-effectv\
  --disable-equalizer\
- --disable-icydemux\
+ --enable-icydemux\
  --disable-flx\
  --disable-goom\
  --disable-goom2k1\
