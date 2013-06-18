@@ -1,12 +1,13 @@
 Name:           gst-plugins-good
-Version:        1.0.6
-Release:        1
+Version:        1.0.7
+Release:        0
 License:        LGPL-2.1+
 %define gst_branch 1.0
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
-Group:          Multimedia/Multimedia Framework
+Group:          Multimedia/Audio
 Source0:        http://download.gnome.org/sources/gst-plugins-good/1.0/%{name}-%{version}.tar.xz
+BuildRequires:  gst-common
 BuildRequires:  gcc-c++
 BuildRequires:  gettext-tools
 BuildRequires:  glib2-devel >= 2.31.14
@@ -59,11 +60,16 @@ This package provides complementary plugins for
 %prep
 chmod 0644 %{SOURCE0}
 %setup -q
+rm -rf common
+cp -a %{_datadir}/gst-common common
+find common -exec touch {} \;
 
 %build
 # FIXME:
 # warning: failed to load external entity "xml/element-v4l2src-details.xml"
 # warning: failed to load external entity "xml/plugin-video4linux2.xml"
+export V=1
+NOCONFIGURE=1 ./autogen.sh
 %configure\
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\
@@ -147,8 +153,8 @@ make %{?_smp_mflags}
 %{_libdir}/gstreamer-%{gst_branch}/libgstvpx.so
 
 
+%if 0%{?ENABLE_AALIB}
 %files extra
 %defattr(-, root, root)
-%if 0%{?ENABLE_AALIB}
 %{_libdir}/gstreamer-%{gst_branch}/libgstaasink.so
 %endif
