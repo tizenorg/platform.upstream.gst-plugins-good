@@ -1,5 +1,5 @@
 #sbs-git:slp/pkgs/g/gst-plugins-good0.10 gst-plugins-good 0.10.31 6e8625ba6fe94fb9d09e6c3be220b54ffaa01273
-Name:       gst-plugins-good
+Name:       gst-plugins-good0.10
 Summary:    GStreamer plugins from the "good" set
 Version:    0.10.32
 Release:    26
@@ -15,9 +15,9 @@ Source0:    %{name}-%{version}.tar.gz
 Patch6 :    gst-plugins-good-disable-gtk-doc.patch
 BuildRequires:  gettext
 BuildRequires:  which
-BuildRequires:  gst-plugins-base-devel  
 BuildRequires:  libjpeg-turbo-devel
 BuildRequires:  pkgconfig(gstreamer-0.10) 
+BuildRequires:  pkgconfig(gstreamer-plugins-base-0.10) 
 BuildRequires:  pkgconfig(glib-2.0)
 BuildRequires:  pkgconfig(libpng)
 BuildRequires:  pkgconfig(libsoup-2.4)
