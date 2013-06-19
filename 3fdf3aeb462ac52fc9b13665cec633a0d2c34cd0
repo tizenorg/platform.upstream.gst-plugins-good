@@ -1,0 +1,9 @@
+Change-Id: I3fdf3aeb462ac52fc9b13665cec633a0d2c34cd0
+Code-Review+1: Yan Yin <yan.yin@intel.com>
+Code-Review+2: Anas Nashif <anas.nashif@intel.com>
+Verified+1: Anas Nashif <anas.nashif@intel.com>
+Submitted-by: Anas Nashif <anas.nashif@intel.com>
+Submitted-at: Wed, 19 Jun 2013 06:03:05 -0700
+Reviewed-on: https://review.tizen.org/gerrit/4070
+Project: platform/upstream/gst-plugins-good
+Branch: refs/heads/tizen
