@@ -7,6 +7,7 @@ Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
 Group:          Multimedia/Audio
 Source0:        http://download.gnome.org/sources/gst-plugins-good/1.0/%{name}-%{version}.tar.xz
+Source1001: 	gst-plugins-good.manifest
 BuildRequires:  gst-common
 BuildRequires:  gcc-c++
 BuildRequires:  gettext-tools
@@ -60,6 +61,7 @@ This package provides complementary plugins for
 %prep
 chmod 0644 %{SOURCE0}
 %setup -q
+cp %{SOURCE1001} .
 rm -rf common
 cp -a %{_datadir}/gst-common common
 find common -exec touch {} \;
@@ -86,6 +88,7 @@ make %{?_smp_mflags}
 %lang_package -f %{name}-%{gst_branch}
 
 %files
+%manifest %{name}.manifest
 %defattr(-, root, root)
 %license COPYING
 %{_libdir}/gstreamer-%{gst_branch}/libgstalaw.so
@@ -155,6 +158,7 @@ make %{?_smp_mflags}
 
 %if 0%{?ENABLE_AALIB}
 %files extra
+%manifest %{name}.manifest
 %defattr(-, root, root)
 %{_libdir}/gstreamer-%{gst_branch}/libgstaasink.so
 %endif
