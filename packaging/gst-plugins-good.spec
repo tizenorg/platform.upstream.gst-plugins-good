@@ -38,6 +38,7 @@ BuildRequires:  pkgconfig(xfixes)
 BuildRequires:  pkgconfig(xv)
 # TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
 BuildRequires:  pkgconfig(zlib)
+BuildRequires:  pkgconfig(libv4l2)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.5
 
@@ -76,6 +77,7 @@ NOCONFIGURE=1 ./autogen.sh
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\
 %endif
+	--with-libv4l2 \
 	--disable-gtk-doc\
 	--with-gtk=3.0\
 	--enable-experimental
