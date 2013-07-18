@@ -520,12 +520,9 @@ gst_pulseringbuffer_open_device (GstAudioRingBuffer * buf)
     pa_context_set_subscribe_callback (pctx->context,
         gst_pulsering_context_subscribe_cb, pctx);
 
-    /* try to connect to the server and wait for completion, we don't want to
-     * autospawn a deamon */
     GST_LOG_OBJECT (psink, "connect to server %s",
         GST_STR_NULL (psink->server));
-    if (pa_context_connect (pctx->context, psink->server,
-            PA_CONTEXT_NOAUTOSPAWN, NULL) < 0)
+    if (pa_context_connect (pctx->context, psink->server, 0, NULL) < 0)
       goto connect_failed;
   } else {
     GST_INFO_OBJECT (psink,
