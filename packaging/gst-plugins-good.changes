@@ -1,3 +1,6 @@
+* Thu Jul 18 2013 Rusty Lynch <rusty.lynch@intel.com> submit/tizen/20130710.131336@e4bf9cb
+- Make pulsesink autostart pulseaudio if needed
+
 * Tue Jun 18 2013 Anas Nashif <anas.nashif@intel.com> 1.0.7@ab9e483
 - Update to 1.0.7
 
