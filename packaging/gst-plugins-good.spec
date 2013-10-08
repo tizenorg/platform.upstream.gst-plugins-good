@@ -118,6 +118,9 @@ make %{?jobs:-j%jobs}
 
 %install
 rm -rf %{buildroot}
+mkdir -p %{buildroot}/usr/share/license
+cp COPYING %{buildroot}/usr/share/license/%{name}
+
 %make_install
 
 
@@ -154,3 +157,4 @@ rm -rf %{buildroot}
 %{_libdir}/gstreamer-0.10/libgstshapewipe.so
 %{_libdir}/gstreamer-0.10/libgstoss4audio.so
 %{_libdir}/gstreamer-0.10/libgstsouphttpsrc.so
+/usr/share/license/%{name}
