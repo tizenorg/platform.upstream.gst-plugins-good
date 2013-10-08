@@ -30,7 +30,8 @@ libgstvideo4linux2_la_CFLAGS =   $(GST_PLUGINS_BASE_CFLAGS) \
 				 $(GST_CFLAGS) \
 				 $(X_CFLAGS) \
 				 $(LIBV4L2_CFLAGS) \
-				 $(GUDEV_CFLAGS)
+				 $(GUDEV_CFLAGS) \
+				 -Wno-deprecated-declarations
 
 libgstvideo4linux2_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstvideo4linux2_la_LIBTOOLFLAGS = --tag=disable-static

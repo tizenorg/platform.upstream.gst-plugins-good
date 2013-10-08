@@ -10,7 +10,7 @@ libgstoss4audio_la_SOURCES = \
 	oss4-sink.c           \
 	oss4-source.c
 
-libgstoss4audio_la_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS)
+libgstoss4audio_la_CFLAGS = $(GST_PLUGINS_BASE_CFLAGS) $(GST_CFLAGS) -Wno-deprecated-declarations
 libgstoss4audio_la_LIBADD = \
 	$(GST_PLUGINS_BASE_LIBS) \
         -lgstinterfaces-$(GST_MAJORMINOR) \

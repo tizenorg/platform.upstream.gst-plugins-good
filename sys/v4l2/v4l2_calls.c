@@ -55,10 +55,14 @@
 
 /* Those are ioctl calls */
 #ifndef V4L2_CID_HCENTER
+#ifdef V4L2_CID_HCENTER_DEPRECATED
 #define V4L2_CID_HCENTER V4L2_CID_HCENTER_DEPRECATED
 #endif
+#endif
 #ifndef V4L2_CID_VCENTER
+#ifdef V4L2_CID_VCENTER_DEPRECATED
 #define V4L2_CID_VCENTER V4L2_CID_VCENTER_DEPRECATED
+#endif
 #endif
 
 GST_DEBUG_CATEGORY_EXTERN (v4l2_debug);
@@ -294,8 +298,12 @@ gst_v4l2_fill_lists (GstV4l2Object * v4l2object)
         break;
       case V4L2_CID_HFLIP:
       case V4L2_CID_VFLIP:
+#ifdef V4L2_CID_HCENTER:
       case V4L2_CID_HCENTER:
+#endif
+#ifdef V4L2_CID_VCENTER:
       case V4L2_CID_VCENTER:
+#endif
 #ifdef V4L2_CID_PAN_RESET
       case V4L2_CID_PAN_RESET:
 #endif
