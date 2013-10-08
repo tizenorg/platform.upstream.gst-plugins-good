@@ -58,6 +58,7 @@ export CFLAGS+=" -Wall -g -fPIC\
  -DGST_EXT_RTSPSRC_MODIFICATION \
  -DGST_EXT_AMRPARSER_MODIFICATION \
  -DGST_EXT_AACPARSER_MODIFICATION \
+ -D_GST_EXT_DISABLE_DCAPARSE_ \
  -DGST_EXT_MPEGAUDIO_MODIFICATION"
 
 %configure --prefix=%{_prefix}\
@@ -78,7 +79,7 @@ export CFLAGS+=" -Wall -g -fPIC\
  --disable-deinterlace\
  --disable-effectv\
  --disable-equalizer\
- --disable-icydemux\
+ --enable-icydemux\
  --disable-flx\
  --disable-goom\
  --disable-goom2k1\
