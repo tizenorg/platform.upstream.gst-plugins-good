@@ -1,0 +1,25 @@
+* Tue Aug 13 2013 Philippe Coval <philippe.coval@eurogiciel.fr> submit/tizen/20130812.031142@2fbbbf0
+- packaging: adding libv4l2
+  Bug-Tizen: TZPC-3648 (gst is not built with v4l support)
+- pngdec: Implement parsing functionality
+
+* Thu Jul 18 2013 Rusty Lynch <rusty.lynch@intel.com> submit/tizen/20130710.131336@e4bf9cb
+- Make pulsesink autostart pulseaudio if needed
+
+* Tue Jun 18 2013 Anas Nashif <anas.nashif@intel.com> 1.0.7@ab9e483
+- Update to 1.0.7
+
+* Fri Mar 29 2013 Anas Nashif <anas.nashif@intel.com> submit/trunk/20130329.123907@da0317c
+- Update version to 1.0.6
+
+* Fri Mar 29 2013 Anas Nashif <anas.nashif@intel.com> upstream/1.0.6@0e1f0bf
+- Update to 1.0.6
+
+* Sat Feb 02 2013 Anas Nashif <anas.nashif@intel.com> accepted/trunk/20130129.153427@67d9654
+- Add vpx support
+
+* Tue Jan 29 2013 Anas Nashif <anas.nashif@intel.com> submit/trunk/20130123.173524@a5f8cd4
+- Add http source and flac support (TZPC-505)
+
+* Wed Jan 23 2013 Anas Nashif <anas.nashif@intel.com> upstream/1.0.5@9fd056f
+- update to 1.0.5
