@@ -3852,6 +3852,8 @@ gst_matroska_demux_parse_blockgroup_or_simpleblock (GstMatroskaDemux * demux,
             g_array_append_val(demux->common.index, *idx);
             GST_INFO("size of the index is %d",demux->common.index->len);
           }
+          free(idx);
+          idx = NULL;		  
         } else {
           //demux->common.segment.duration = (GST_BUFFER_TIMESTAMP(sub) + GST_BUFFER_DURATION (sub));
           demux->duration = GST_BUFFER_TIMESTAMP(sub) + GST_BUFFER_DURATION (sub);
