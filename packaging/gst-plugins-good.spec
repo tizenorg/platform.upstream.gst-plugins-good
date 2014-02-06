@@ -1,3 +1,5 @@
+%bcond_with x
+
 Name:           gst-plugins-good
 Version:        1.2.0
 Release:        0
@@ -24,19 +26,22 @@ BuildRequires:  pkgconfig(flac)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0) >= 2.8.0
 BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
-BuildRequires:  pkgconfig(ice)
 BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(libxml-2.0) >= 2.4.9
-BuildRequires:  pkgconfig(sm)
 BuildRequires:  pkgconfig(speex) >= 1.1.6
 BuildRequires:  pkgconfig(vpx) >= 1.1.0
+# TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
+%if %{with x}
+BuildRequires:  pkgconfig(ice)
+BuildRequires:  pkgconfig(sm)
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
 # used by libgstvideo4linux2.so
 BuildRequires:  pkgconfig(xv)
-# TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
+%endif
+
 BuildRequires:  pkgconfig(zlib)
 BuildRequires:  pkgconfig(libv4l2)
 Requires:       gst-plugins-base >= 1.0.0
@@ -148,7 +153,9 @@ make %{?_smp_mflags}
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideomixer.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstwavenc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstwavparse.so
+%if %{with x}
 %{_libdir}/gstreamer-%{gst_branch}/libgstximagesrc.so
+%endif
 %{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstsouphttpsrc.so
