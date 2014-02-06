@@ -10,6 +10,7 @@ Url:            http://gstreamer.freedesktop.org/
 Group:          Multimedia/Audio
 Source0:        http://download.gnome.org/sources/gst-plugins-good/1.0/%{name}-%{version}.tar.xz
 Source1001: 	gst-plugins-good.manifest
+Source10000:    common.tar.bz2
 BuildRequires:  gst-common
 BuildRequires:  gcc-c++
 BuildRequires:  gettext-tools
@@ -66,7 +67,7 @@ This package provides complementary plugins for
 
 %prep
 chmod 0644 %{SOURCE0}
-%setup -q
+%setup -q -a 10000
 cp %{SOURCE1001} .
 rm -rf common
 cp -a %{_datadir}/gst-common common
