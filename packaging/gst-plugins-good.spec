@@ -1,5 +1,5 @@
 %bcond_with x
-
+%bcond_with jack
 Name:           gst-plugins-good
 Version:        1.2.0
 Release:        0
@@ -40,6 +40,10 @@ BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
 # used by libgstvideo4linux2.so
 BuildRequires:  pkgconfig(xv)
+%endif
+
+%if %{with jack}
+BuildRequires:  pkgconfig(jack)
 %endif
 
 BuildRequires:  pkgconfig(zlib)
@@ -155,6 +159,9 @@ make %{?_smp_mflags}
 %{_libdir}/gstreamer-%{gst_branch}/libgstwavparse.so
 %if %{with x}
 %{_libdir}/gstreamer-%{gst_branch}/libgstximagesrc.so
+%endif
+%if %{with jack}
+%{_libdir}/gstreamer-%{gst_branch}/libgstjack.so
 %endif
 %{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
