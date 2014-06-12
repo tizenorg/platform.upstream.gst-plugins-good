@@ -1,8 +1,8 @@
 
-Release notes for GStreamer Good Plugins 1.2.0
+Release notes for GStreamer Good Plugins 1.2.2
 
 
-The GStreamer team is proud to announce a new feature release
+The GStreamer team is proud to announce a new bug-fix release
 in the 1.x stable series of the
 core of the GStreamer streaming media framework.
 
@@ -57,11 +57,24 @@ contains a set of codecs plugins based on libav (formerly gst-ffmpeg)
 
 Bugs fixed in this release
      
-      * 706083 : v4l2src: UVC Allocated buffers wrapped in GstBuffer get orphaned by GstBuffer API
-      * 707242 : qtmux: streamable and faststart property have no effect
-      * 707933 : matroskademux: Wrong UTF8 detection causes wrong detection of subtitle encoding
-      * 708501 : osxvideosink: fix segfault releasing the element
-      * 708622 : rtpjitterbuffer: fix various regressions
+      * 688153 : matroskademux: audio gap after seeking on webm with lacing
+      * 709800 : rtpjitterbuffer: stalled stream after gst_rtp_jitter_buffer_clear_pt_map() being called.
+      * 710013 : tests: rtpjitterbuffer test_rtx_packet_delay - spurious failures
+      * 711131 : rtpjitterbuffer: SIGSEGV when do-retransmission=true and a lot of packets are dopped
+      * 711829 : matroskademux: assert on division by zero
+      * 712137 : v4l2sink: fixes for uploading compressed
+      * 712328 : matroskademux: Use GstVideoInfo helper to create caps for raw video
+      * 712335 : qtdemux: Use GstVideoInfo helper to create caps for raw video
+      * 712401 : videomixer: Segfault when generating color backround in UYVY
+      * 712611 : v4l2: clear cached caps on close
+      * 712722 : [regression] rtpbin fails to return not linked when it should
+      * 712744 : matroskamux: Fix handling of negative timestamps
+      * 715039 : rtpjitterbuffer: Fix inconsistency in waking up
+      * 719431 : videomixer: Should fail negotiation if it can't preserve the alpha channel of input streams
+      * 719811 : pulsesink: Leak of device_info in gst_pulsesink_sink_info_cb
+      * 720813 : qtmux: Invalid calculation of descriptor length
+      * 720986 : vp9dec: Don't build with libvpx earlier than 1.3.0 because of non-final bitstream
+      * 721003 : rtspsrc: play requests can't find media with query parameters
 
 ==== Download ====
 
@@ -98,11 +111,16 @@ subscribe to the gstreamer-devel list.
         
 Contributors to this release
     
-      * Andoni Morales Alastruey
-      * Edward Hervey
+      * Brendan Long
+      * George Kiagiadakis
+      * Marc Leeman
+      * Mark Nauwelaerts
+      * Mathieu Duponchelle
+      * Michael Olbrich
       * Olivier Crête
-      * Robert Krakora
+      * Per x Johansson
       * Sebastian Dröge
+      * Thibault Saunier
       * Tim-Philipp Müller
       * Wim Taymans
  
