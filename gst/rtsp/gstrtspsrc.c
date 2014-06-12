@@ -186,6 +186,7 @@ gst_rtsp_src_buffer_mode_get_type (void)
 #define DEFAULT_MULTICAST_IFACE  NULL
 #define DEFAULT_NTP_SYNC         FALSE
 #define DEFAULT_USE_PIPELINE_CLOCK      FALSE
+#define DEFAULT_TLS_VALIDATION_FLAGS G_TLS_CERTIFICATE_VALIDATE_ALL
 
 enum
 {
@@ -218,6 +219,7 @@ enum
   PROP_NTP_SYNC,
   PROP_USE_PIPELINE_CLOCK,
   PROP_SDES,
+  PROP_TLS_VALIDATION_FLAGS,
   PROP_LAST
 };
 
@@ -583,6 +585,20 @@ gst_rtspsrc_class_init (GstRTSPSrcClass * klass)
           GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
+   * GstRTSPSrc::tls-validation-flags:
+   *
+   * TLS certificate validation flags used to validate server
+   * certificate.
+   *
+   * Since: 1.2.1
+   */
+  g_object_class_install_property (gobject_class, PROP_TLS_VALIDATION_FLAGS,
+      g_param_spec_flags ("tls-validation-flags", "TLS validation flags",
+          "TLS certificate validation flags used to validate the server certificate",
+          G_TYPE_TLS_CERTIFICATE_FLAGS, DEFAULT_TLS_VALIDATION_FLAGS,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
    * GstRTSPSrc::handle-request:
    * @rtspsrc: a #GstRTSPSrc
    * @request: a #GstRTSPMessage
@@ -694,6 +710,7 @@ gst_rtspsrc_init (GstRTSPSrc * src)
   src->ntp_sync = DEFAULT_NTP_SYNC;
   src->use_pipeline_clock = DEFAULT_USE_PIPELINE_CLOCK;
   src->sdes = NULL;
+  src->tls_validation_flags = DEFAULT_TLS_VALIDATION_FLAGS;
 
   /* get a list of all extensions */
   src->extensions = gst_rtsp_ext_list_get ();
@@ -948,6 +965,9 @@ gst_rtspsrc_set_property (GObject * object, guint prop_id, const GValue * value,
     case PROP_SDES:
       rtspsrc->sdes = g_value_dup_boxed (value);
       break;
+    case PROP_TLS_VALIDATION_FLAGS:
+      rtspsrc->tls_validation_flags = g_value_get_flags (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1072,6 +1092,9 @@ gst_rtspsrc_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_SDES:
       g_value_set_boxed (value, rtspsrc->sdes);
+      break;
+    case PROP_TLS_VALIDATION_FLAGS:
+      g_value_set_flags (value, rtspsrc->tls_validation_flags);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1249,6 +1272,23 @@ gst_rtspsrc_collect_connections (GstRTSPSrc * src, const GstSDPMessage * sdp,
   }
 }
 
+static const gchar *
+get_aggregate_control (GstRTSPSrc * src)
+{
+  const gchar *base;
+
+  if (src->control)
+    base = src->control;
+  else if (src->content_base)
+    base = src->content_base;
+  else if (src->conninfo.url_str)
+    base = src->conninfo.url_str;
+  else
+    base = "/";
+
+  return base;
+}
+
 static GstRTSPStream *
 gst_rtspsrc_create_stream (GstRTSPSrc * src, GstSDPMessage * sdp, gint idx)
 {
@@ -1342,14 +1382,7 @@ gst_rtspsrc_create_stream (GstRTSPSrc * src, GstSDPMessage * sdp, gint idx)
       if (g_strcmp0 (control_url, "*") == 0)
         control_url = "";
 
-      if (src->control)
-        base = src->control;
-      else if (src->content_base)
-        base = src->content_base;
-      else if (src->conninfo.url_str)
-        base = src->conninfo.url_str;
-      else
-        base = "/";
+      base = get_aggregate_control (src);
 
       /* check if the base ends or control starts with / */
       has_slash = g_str_has_prefix (control_url, "/");
@@ -2875,7 +2908,7 @@ gst_rtspsrc_stream_configure_tcp (GstRTSPSrc * src, GstRTSPStream * stream,
 
     /* allocate pads for sending the channel data into the manager */
     pad0 = gst_pad_new_from_template (template, "internalsrc_0");
-    gst_pad_link (pad0, stream->channelpad[0]);
+    gst_pad_link_full (pad0, stream->channelpad[0], GST_PAD_LINK_CHECK_NOTHING);
     gst_object_unref (stream->channelpad[0]);
     stream->channelpad[0] = pad0;
     gst_pad_set_event_function (pad0, gst_rtspsrc_handle_internal_src_event);
@@ -2888,7 +2921,8 @@ gst_rtspsrc_stream_configure_tcp (GstRTSPSrc * src, GstRTSPStream * stream,
        * manager. */
       pad1 = gst_pad_new_from_template (template, "internalsrc_1");
       gst_pad_set_event_function (pad1, gst_rtspsrc_handle_internal_src_event);
-      gst_pad_link (pad1, stream->channelpad[1]);
+      gst_pad_link_full (pad1, stream->channelpad[1],
+          GST_PAD_LINK_CHECK_NOTHING);
       gst_object_unref (stream->channelpad[1]);
       stream->channelpad[1] = pad1;
       gst_pad_set_active (pad1, TRUE);
@@ -2913,7 +2947,7 @@ gst_rtspsrc_stream_configure_tcp (GstRTSPSrc * src, GstRTSPStream * stream,
 
     /* and link */
     if (pad) {
-      gst_pad_link (pad, stream->rtcppad);
+      gst_pad_link_full (pad, stream->rtcppad, GST_PAD_LINK_CHECK_NOTHING);
       gst_object_unref (pad);
     }
 
@@ -3102,7 +3136,8 @@ gst_rtspsrc_stream_configure_udp (GstRTSPSrc * src, GstRTSPStream * stream,
       GST_DEBUG_OBJECT (src, "connecting UDP source 0 to manager");
       /* configure for UDP delivery, we need to connect the UDP pads to
        * the session plugin. */
-      gst_pad_link (*outpad, stream->channelpad[0]);
+      gst_pad_link_full (*outpad, stream->channelpad[0],
+          GST_PAD_LINK_CHECK_NOTHING);
       gst_object_unref (*outpad);
       *outpad = NULL;
       /* we connected to pad-added signal to get pads from the manager */
@@ -3128,7 +3163,8 @@ gst_rtspsrc_stream_configure_udp (GstRTSPSrc * src, GstRTSPStream * stream,
       GST_DEBUG_OBJECT (src, "connecting UDP source 1 to manager");
 
       pad = gst_element_get_static_pad (stream->udpsrc[1], "src");
-      gst_pad_link (pad, stream->channelpad[1]);
+      gst_pad_link_full (pad, stream->channelpad[1],
+          GST_PAD_LINK_CHECK_NOTHING);
       gst_object_unref (pad);
     } else {
       /* leave unlinked */
@@ -3217,7 +3253,8 @@ gst_rtspsrc_stream_configure_udp_sinks (GstRTSPSrc * src,
     gst_object_ref (stream->fakesrc);
     gst_bin_add (GST_BIN_CAST (src), stream->fakesrc);
 
-    gst_element_link (stream->fakesrc, stream->udpsink[0]);
+    gst_element_link_pads_full (stream->fakesrc, "src", stream->udpsink[0],
+        "sink", GST_PAD_LINK_CHECK_NOTHING);
   }
   if (do_rtcp) {
     GST_DEBUG_OBJECT (src, "configure RTCP UDP sink for %s:%d", destination,
@@ -3269,7 +3306,7 @@ gst_rtspsrc_stream_configure_udp_sinks (GstRTSPSrc * src,
 
     /* and link */
     if (pad) {
-      gst_pad_link (pad, stream->rtcppad);
+      gst_pad_link_full (pad, stream->rtcppad, GST_PAD_LINK_CHECK_NOTHING);
       gst_object_unref (pad);
     }
   }
@@ -3628,6 +3665,12 @@ gst_rtsp_conninfo_connect (GstRTSPSrc * src, GstRTSPConnInfo * info,
 
     GST_DEBUG_OBJECT (src, "sanitized uri %s", info->url_str);
 
+    if (info->url->transports & GST_RTSP_LOWER_TRANS_TLS) {
+      if (!gst_rtsp_connection_set_tls_validation_flags (info->connection,
+              src->tls_validation_flags))
+        GST_WARNING_OBJECT (src, "Unable to set TLS validation flags");
+    }
+
     if (info->url->transports & GST_RTSP_LOWER_TRANS_HTTP)
       gst_rtsp_connection_set_tunneled (info->connection, TRUE);
 
@@ -3788,7 +3831,7 @@ gst_rtspsrc_send_keep_alive (GstRTSPSrc * src)
   GstRTSPMessage request = { 0 };
   GstRTSPResult res;
   GstRTSPMethod method;
-  gchar *control;
+  const gchar *control;
 
   if (src->do_rtsp_keep_alive == FALSE) {
     GST_DEBUG_OBJECT (src, "do-rtsp-keep-alive is FALSE, not sending.");
@@ -3804,11 +3847,7 @@ gst_rtspsrc_send_keep_alive (GstRTSPSrc * src)
   else
     method = GST_RTSP_OPTIONS;
 
-  if (src->control)
-    control = src->control;
-  else
-    control = src->conninfo.url_str;
-
+  control = get_aggregate_control (src);
   if (control == NULL)
     goto no_control;
 
@@ -6239,7 +6278,7 @@ gst_rtspsrc_close (GstRTSPSrc * src, gboolean async, gboolean only_close)
   GstRTSPMessage response = { 0 };
   GstRTSPResult res = GST_RTSP_OK;
   GList *walk;
-  gchar *control;
+  const gchar *control;
 
   GST_DEBUG_OBJECT (src, "TEARDOWN...");
 
@@ -6254,17 +6293,14 @@ gst_rtspsrc_close (GstRTSPSrc * src, gboolean async, gboolean only_close)
     goto close;
 
   /* construct a control url */
-  if (src->control)
-    control = src->control;
-  else
-    control = src->conninfo.url_str;
+  control = get_aggregate_control (src);
 
   if (!(src->methods & (GST_RTSP_PLAY | GST_RTSP_TEARDOWN)))
     goto not_supported;
 
   for (walk = src->streams; walk; walk = g_list_next (walk)) {
     GstRTSPStream *stream = (GstRTSPStream *) walk->data;
-    gchar *setup_url;
+    const gchar *setup_url;
     GstRTSPConnInfo *info;
 
     /* try aggregate control first but do non-aggregate control otherwise */
@@ -6544,7 +6580,7 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
   GList *walk;
   gchar *hval;
   gint hval_idx;
-  gchar *control;
+  const gchar *control;
 
   GST_DEBUG_OBJECT (src, "PLAY...");
 
@@ -6571,14 +6607,11 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
   gst_rtspsrc_set_state (src, GST_STATE_PLAYING);
 
   /* construct a control url */
-  if (src->control)
-    control = src->control;
-  else
-    control = src->conninfo.url_str;
+  control = get_aggregate_control (src);
 
   for (walk = src->streams; walk; walk = g_list_next (walk)) {
     GstRTSPStream *stream = (GstRTSPStream *) walk->data;
-    gchar *setup_url;
+    const gchar *setup_url;
     GstRTSPConnection *conn;
 
     /* try aggregate control first but do non-aggregate control otherwise */
@@ -6762,7 +6795,7 @@ gst_rtspsrc_pause (GstRTSPSrc * src, gboolean async)
   GstRTSPMessage request = { 0 };
   GstRTSPMessage response = { 0 };
   GList *walk;
-  gchar *control;
+  const gchar *control;
 
   GST_DEBUG_OBJECT (src, "PAUSE...");
 
@@ -6779,17 +6812,14 @@ gst_rtspsrc_pause (GstRTSPSrc * src, gboolean async)
     goto no_connection;
 
   /* construct a control url */
-  if (src->control)
-    control = src->control;
-  else
-    control = src->conninfo.url_str;
+  control = get_aggregate_control (src);
 
   /* loop over the streams. We might exit the loop early when we could do an
    * aggregate control */
   for (walk = src->streams; walk; walk = g_list_next (walk)) {
     GstRTSPStream *stream = (GstRTSPStream *) walk->data;
     GstRTSPConnection *conn;
-    gchar *setup_url;
+    const gchar *setup_url;
 
     /* try aggregate control first but do non-aggregate control otherwise */
     if (control)
@@ -6967,7 +6997,7 @@ gst_rtspsrc_thread (GstRTSPSrc * src)
   GST_OBJECT_LOCK (src);
   cmd = src->pending_cmd;
   if (cmd == CMD_RECONNECT || cmd == CMD_PLAY || cmd == CMD_PAUSE
-      || cmd == CMD_LOOP)
+      || cmd == CMD_LOOP || cmd == CMD_OPEN)
     src->pending_cmd = CMD_LOOP;
   else
     src->pending_cmd = CMD_WAIT;

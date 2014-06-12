@@ -905,6 +905,8 @@ gst_v4l2_object_close (GstV4l2Object * v4l2object)
   if (!gst_v4l2_close (v4l2object))
     return FALSE;
 
+  gst_caps_replace (&v4l2object->probed_caps, NULL);
+
   if (v4l2object->formats) {
     gst_v4l2_object_clear_format_list (v4l2object);
   }
@@ -2714,7 +2716,7 @@ gst_v4l2_object_get_caps (GstV4l2Object * v4l2object, GstCaps * filter)
     ret = gst_caps_ref (v4l2object->probed_caps);
   }
 
-  GST_INFO_OBJECT (v4l2object->element, "probed caps: %p", ret);
+  GST_INFO_OBJECT (v4l2object->element, "probed caps: %" GST_PTR_FORMAT, ret);
   LOG_CAPS (v4l2object->element, ret);
 
   return ret;

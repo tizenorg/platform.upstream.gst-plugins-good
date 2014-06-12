@@ -182,11 +182,8 @@ rtp_jitter_buffer_set_clock_rate (RTPJitterBuffer * jbuf, guint32 clock_rate)
       GST_WARNING ("Clock rate changed from %" G_GUINT32_FORMAT " to %"
           G_GUINT32_FORMAT, jbuf->clock_rate, clock_rate);
     }
-    jbuf->base_time = -1;
-    jbuf->base_rtptime = -1;
     jbuf->clock_rate = clock_rate;
-    jbuf->prev_out_time = -1;
-    jbuf->prev_send_diff = -1;
+    rtp_jitter_buffer_reset_skew (jbuf);
   }
 }
 
@@ -216,7 +213,6 @@ rtp_jitter_buffer_reset_skew (RTPJitterBuffer * jbuf)
   jbuf->base_time = -1;
   jbuf->base_rtptime = -1;
   jbuf->base_extrtp = -1;
-  jbuf->clock_rate = -1;
   jbuf->ext_rtptime = -1;
   jbuf->last_rtptime = -1;
   jbuf->window_pos = 0;
@@ -685,6 +681,9 @@ rtp_jitter_buffer_insert (RTPJitterBuffer * jbuf, RTPJitterBufferItem * item,
   dts = item->dts;
   rtptime = item->rtptime;
 
+  if (rtptime == -1)
+    goto append;
+
   /* rtp time jumps are checked for during skew calculation, but bypassed
    * in other mode, so mind those here and reset jb if needed.
    * Only reset if valid input time, which is likely for UDP input
@@ -909,24 +908,19 @@ guint32
 rtp_jitter_buffer_get_ts_diff (RTPJitterBuffer * jbuf)
 {
   guint64 high_ts, low_ts;
-  GstBuffer *high_buf, *low_buf;
+  RTPJitterBufferItem *high_buf, *low_buf;
   guint32 result;
-  GstRTPBuffer rtp = { NULL };
 
   g_return_val_if_fail (jbuf != NULL, 0);
 
-  high_buf = g_queue_peek_head (jbuf->packets);
-  low_buf = g_queue_peek_tail (jbuf->packets);
+  high_buf = (RTPJitterBufferItem *) g_queue_peek_head_link (jbuf->packets);
+  low_buf = (RTPJitterBufferItem *) g_queue_peek_tail_link (jbuf->packets);
 
   if (!high_buf || !low_buf || high_buf == low_buf)
     return 0;
 
-  gst_rtp_buffer_map (high_buf, GST_MAP_READ, &rtp);
-  high_ts = gst_rtp_buffer_get_timestamp (&rtp);
-  gst_rtp_buffer_unmap (&rtp);
-  gst_rtp_buffer_map (low_buf, GST_MAP_READ, &rtp);
-  low_ts = gst_rtp_buffer_get_timestamp (&rtp);
-  gst_rtp_buffer_unmap (&rtp);
+  high_ts = high_buf->rtptime;
+  low_ts = low_buf->rtptime;
 
   /* it needs to work if ts wraps */
   if (high_ts >= low_ts) {

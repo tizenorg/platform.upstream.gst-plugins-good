@@ -5,7 +5,7 @@ dnl please read gstreamer/docs/random/autotools before changing this file
 dnl initialize autoconf
 dnl releases only do -Wall, git and prerelease does -Werror too
 dnl use a three digit version number for releases, and four for git/pre
-AC_INIT([GStreamer Good Plug-ins],[1.2.0],[http://bugzilla.gnome.org/enter_bug.cgi?product=GStreamer],[gst-plugins-good])
+AC_INIT([GStreamer Good Plug-ins],[1.2.2],[http://bugzilla.gnome.org/enter_bug.cgi?product=GStreamer],[gst-plugins-good])
 
 AG_GST_INIT
 
@@ -43,11 +43,11 @@ AC_DEFINE_UNQUOTED(GST_API_VERSION, "$GST_API_VERSION",
   [GStreamer API Version])
 
 AG_GST_LIBTOOL_PREPARE
-AS_LIBTOOL(GST, 200, 0, 200)
+AS_LIBTOOL(GST, 202, 0, 202)
 
 dnl *** required versions of GStreamer stuff ***
 GST_REQ=1.2.0
-GSTPB_REQ=1.2.0
+GSTPB_REQ=1.2.1
 
 dnl *** autotools stuff ****
 
@@ -617,6 +617,7 @@ fi
 
 # Check if v4l2 support dmabuf
 if test x$HAVE_GST_V4L2 = xyes; then
+    AC_CHECK_TYPE(v4l2_exportbuffer,[
 	AC_CHECK_DECLS(V4L2_MEMORY_DMABUF,,,[
 					#include <sys/types.h>
 					#ifdef __sun /* Solaris */
@@ -630,7 +631,20 @@ if test x$HAVE_GST_V4L2 = xyes; then
 					#define __user
 					#include <linux/videodev2.h>
 					#endif
-					])
+					])],,[
+                                        #include <sys/types.h>
+                                        #ifdef __sun /* Solaris */
+                                        #include <sys/types.h>
+                                        #include <sys/videodev2.h>
+                                        #elif __FreeBSD__
+                                        #include <linux/videodev2.h>
+                                        #else /* Linux */
+                                        #include <linux/types.h>
+                                        #define _LINUX_TIME_H
+                                        #define __user
+                                        #include <linux/videodev2.h>
+                                        #endif
+                                    ])
 fi
 
 dnl Check for X11
@@ -961,7 +975,8 @@ AG_GST_CHECK_FEATURE(VPX, [VPX decoder], vpx, [
       HAVE_VP8=yes
       AC_DEFINE(HAVE_VP8_DECODER, 1, [Defined if the VP8 decoder is available])
     ])
-    if test "x$BUILD_EXPERIMENTAL" = "xyes"; then
+
+    PKG_CHECK_MODULES(VPX_130, vpx >= 1.3.0, [
       AC_CHECK_LIB(vpx, vpx_codec_vp9_cx_algo, [
         HAVE_VP9=yes
         AC_DEFINE(HAVE_VP9_ENCODER, 1, [Defined if the VP9 encoder is available])
@@ -970,7 +985,7 @@ AG_GST_CHECK_FEATURE(VPX, [VPX decoder], vpx, [
         HAVE_VP9=yes
         AC_DEFINE(HAVE_VP9_DECODER, 1, [Defined if the VP9 decoder is available])
       ])
-    fi
+    ], [true])
     LIBS="$OLD_LIBS"
     CFLAGS="$OLD_CFLAGS"
   fi
