@@ -1,7 +1,7 @@
 %bcond_with x
 
 Name:           gst-plugins-good
-Version:        1.2.0
+Version:        1.2.4
 Release:        0
 License:        LGPL-2.1+
 %define gst_branch 1.0
