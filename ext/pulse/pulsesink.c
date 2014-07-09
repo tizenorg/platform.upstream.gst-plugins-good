@@ -843,6 +843,39 @@ gst_pulsering_wait_for_stream_ready (GstPulseSink * psink, pa_stream * stream)
   }
 }
 
+static void
+gst_pulsesink_sink_exist_cb (pa_context * c, const pa_sink_info * i, int eol,
+    void *userdata)
+{
+  gboolean *is_sink_exist = (gboolean *) userdata;
+
+  if (!i)
+    *is_sink_exist = FALSE;
+  else
+    *is_sink_exist = TRUE;
+  pa_threaded_mainloop_signal (mainloop, 0);
+}
+
+static gboolean
+gst_pulsesink_device_exist(pa_context *context, gchar *dev)
+{
+  pa_operation* o = NULL;
+  gboolean device_exist = FALSE;
+
+  if (!(o = pa_context_get_sink_info_by_name (context, dev,
+          gst_pulsesink_sink_exist_cb, &device_exist)))
+    return device_exist;
+
+  while (pa_operation_get_state (o) == PA_OPERATION_RUNNING) {
+    pa_threaded_mainloop_wait (mainloop);
+    if (!CONTEXT_OK (context))
+      break;
+  }
+
+  pa_operation_unref (o);
+  return device_exist;
+}
+
 
 /* This method should create a new stream of the given @spec. No playback should
  * start yet so we start in the corked state. */
@@ -2042,6 +2075,12 @@ gst_pulsesink_create_probe_stream (GstPulseSink * psink,
 
   pa_stream_set_state_callback (stream, gst_pulsering_stream_state_cb, pbuf);
 
+  if (psink->device && !gst_pulsesink_device_exist (pbuf->context, psink->device))
+  {
+    GST_WARNING_OBJECT (psink, "Sink:%s is not exist, set sink name to NULL", psink->device);
+    g_free (psink->device);
+    psink->device = NULL;
+  }
   if (pa_stream_connect_playback (stream, psink->device, NULL, flags, NULL,
           NULL) < 0)
     goto error;
