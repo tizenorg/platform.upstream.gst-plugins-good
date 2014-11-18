@@ -57,7 +57,7 @@ processing capabilities can be added simply by installing new plug-ins.
 %package extra
 Summary:        Complementary plugins for %{name}
 Group:          Productivity/Multimedia/Other
-Requires:       %{name} = %{version}
+Requires:       %{name} = %{version}-%{release}
 Enhances:       gst-plugins-good
 
 %description extra
