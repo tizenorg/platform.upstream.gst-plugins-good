@@ -1,16 +1,15 @@
 %bcond_with x
+%define gst_branch 1.0
 
 Name:           gst-plugins-good
-Version:        1.2.4
+Version:        1.4.1
 Release:        0
 License:        LGPL-2.1+
-%define gst_branch 1.0
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
-Group:          Multimedia/Audio
-Source0:        http://download.gnome.org/sources/gst-plugins-good/1.0/%{name}-%{version}.tar.xz
+Group:          Multimedia
+Source:         http://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-%{version}.tar.xz
 Source100:      common.tar.bz2
-Source1001: 	gst-plugins-good.manifest
 BuildRequires:  gcc-c++
 BuildRequires:  gettext-tools
 BuildRequires:  glib2-devel >= 2.31.14
@@ -65,10 +64,8 @@ This package provides complementary plugins for
 %{name}.
 
 %prep
-chmod 0644 %{SOURCE0}
 %setup -q
 %setup -q -T -D -a 100
-cp %{SOURCE1001} .
 
 %build
 # FIXME:
