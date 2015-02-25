@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.4.1
-Release:        1
+Release:        2
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -73,6 +73,7 @@ This package provides complementary plugins for
 # warning: failed to load external entity "xml/plugin-video4linux2.xml"
 export V=1
 NOCONFIGURE=1 ./autogen.sh
+export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED"
 %configure\
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\

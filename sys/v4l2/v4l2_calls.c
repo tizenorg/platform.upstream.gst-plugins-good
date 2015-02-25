@@ -33,6 +33,9 @@
 #include <string.h>
 #include <errno.h>
 #include <unistd.h>
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+#include <glob.h>
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 #ifdef __sun
 /* Needed on older Solaris Nevada builds (72 at least) */
 #include <stropts.h>
@@ -50,6 +53,17 @@
 #include "gstv4l2videodec.h"
 
 #include "gst/gst-i18n-plugin.h"
+
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+enum {
+  V4L2_OPEN_ERROR = 0,
+  V4L2_OPEN_ERROR_STAT_FAILED,
+  V4L2_OPEN_ERROR_NO_DEVICE,
+  V4L2_OPEN_ERROR_NOT_OPEN,
+  V4L2_OPEN_ERROR_NOT_CAPTURE,
+  V4L2_OPEN_ERROR_NOT_OUTPUT
+};
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
 GST_DEBUG_CATEGORY_EXTERN (v4l2_debug);
 #define GST_CAT_DEFAULT v4l2_debug
@@ -514,6 +528,13 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
 {
   struct stat st;
   int libv4l2_fd;
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  int error_type = V4L2_OPEN_ERROR_STAT_FAILED;
+  int device_index = 0;
+  glob_t glob_buf;
+
+  memset(&glob_buf, 0x0, sizeof(glob_t));
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   GST_DEBUG_OBJECT (v4l2object->element, "Trying to open device %s",
       v4l2object->videodev);
@@ -525,19 +546,43 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
   if (!v4l2object->videodev)
     v4l2object->videodev = g_strdup ("/dev/video");
 
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+CHECK_AGAIN:
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
   /* check if it is a device */
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (stat (v4l2object->videodev, &st) == -1) {
+    error_type = V4L2_OPEN_ERROR_STAT_FAILED;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (stat (v4l2object->videodev, &st) == -1)
     goto stat_failed;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (!S_ISCHR (st.st_mode)) {
+    error_type = V4L2_OPEN_ERROR_NO_DEVICE;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (!S_ISCHR (st.st_mode))
     goto no_device;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   /* open the device */
   v4l2object->video_fd =
       open (v4l2object->videodev, O_RDWR /* | O_NONBLOCK */ );
 
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (!GST_V4L2_IS_OPEN (v4l2object)) {
+    error_type = V4L2_OPEN_ERROR_NOT_OPEN;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (!GST_V4L2_IS_OPEN (v4l2object))
     goto not_open;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   libv4l2_fd = v4l2_fd_open (v4l2object->video_fd,
       V4L2_ENABLE_ENUM_FMT_EMULATION);
@@ -551,19 +596,45 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
     v4l2object->video_fd = libv4l2_fd;
 
   /* get capabilities, error will be posted */
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (!gst_v4l2_get_capabilities (v4l2object)) {
+    error_type = V4L2_OPEN_ERROR;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (!gst_v4l2_get_capabilities (v4l2object))
     goto error;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   /* do we need to be a capture device? */
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  GST_INFO_OBJECT (v4l2object->element, "capabilities 0x%x, %d, %d", v4l2object->vcap.capabilities, !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)), (v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_VIDEO_OUTPUT_MPLANE)));
+  if (GST_IS_V4L2SRC (v4l2object->element) &&
+      (!(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE | V4L2_CAP_VIDEO_CAPTURE_MPLANE)) ||
+       (v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_OUTPUT | V4L2_CAP_VIDEO_OUTPUT_MPLANE)))) {
+    error_type = V4L2_OPEN_ERROR_NOT_CAPTURE;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (GST_IS_V4L2SRC (v4l2object->element) &&
       !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_CAPTURE |
               V4L2_CAP_VIDEO_CAPTURE_MPLANE)))
     goto not_capture;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (GST_IS_V4L2SINK (v4l2object->element) &&
+      !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_OUTPUT |
+              V4L2_CAP_VIDEO_OUTPUT_MPLANE))) {
+    error_type = V4L2_OPEN_ERROR_NOT_OUTPUT;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (GST_IS_V4L2SINK (v4l2object->element) &&
       !(v4l2object->vcap.capabilities & (V4L2_CAP_VIDEO_OUTPUT |
               V4L2_CAP_VIDEO_OUTPUT_MPLANE)))
     goto not_output;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   if (GST_IS_V4L2_VIDEO_DEC (v4l2object->element) &&
       /* Today's M2M device only expose M2M */
@@ -579,8 +650,15 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
   gst_v4l2_adjust_buf_type (v4l2object);
 
   /* create enumerations, posts errors. */
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (!gst_v4l2_fill_lists (v4l2object)) {
+    error_type = V4L2_OPEN_ERROR;
+    goto pre_error_check;
+  }
+#else /* GST_EXT_V4L2SRC_MODIFIED */
   if (!gst_v4l2_fill_lists (v4l2object))
     goto error;
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   GST_INFO_OBJECT (v4l2object->element,
       "Opened device '%s' (%s) successfully",
@@ -588,6 +666,10 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
 
   if (v4l2object->extra_controls)
     gst_v4l2_set_controls (v4l2object, v4l2object->extra_controls);
+
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+  globfree(&glob_buf);
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   /* UVC devices are never interlaced, and doing VIDIOC_TRY_FMT on them
    * causes expensive and slow USB IO, so don't probe them for interlaced
@@ -597,6 +679,59 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
   }
 
   return TRUE;
+
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+pre_error_check:
+  {
+    if (GST_IS_V4L2SRC(v4l2object->element) && glob_buf.gl_pathc == 0) {
+      if (glob("/dev/video*", 0, 0, &glob_buf) != 0) {
+        GST_WARNING_OBJECT(v4l2object->element, "glob failed");
+      }
+    }
+
+    if (glob_buf.gl_pathc > 0 && device_index < glob_buf.gl_pathc) {
+      if (v4l2object->videodev) {
+        g_free(v4l2object->videodev);
+      }
+      v4l2object->videodev = g_strdup(glob_buf.gl_pathv[device_index]);
+      if (v4l2object->videodev) {
+        device_index++;
+        GST_INFO_OBJECT(v4l2object->element, "check device [%s]",
+                        v4l2object->videodev);
+
+        if (GST_V4L2_IS_OPEN (v4l2object)) {
+          /* close device */
+          v4l2_close (v4l2object->video_fd);
+          v4l2object->video_fd = -1;
+        }
+        /* empty lists */
+        gst_v4l2_empty_lists (v4l2object);
+
+        goto CHECK_AGAIN;
+      } else {
+        GST_WARNING_OBJECT(v4l2object->element, "g_strdup failed [%s]",
+                           glob_buf.gl_pathv[device_index]);
+      }
+    }
+
+    GST_WARNING_OBJECT(v4l2object->element, "error type : %d", error_type);
+
+    switch (error_type) {
+    case V4L2_OPEN_ERROR_STAT_FAILED:
+      goto stat_failed;
+    case V4L2_OPEN_ERROR_NO_DEVICE:
+      goto no_device;
+    case V4L2_OPEN_ERROR_NOT_OPEN:
+      goto not_open;
+    case V4L2_OPEN_ERROR_NOT_CAPTURE:
+      goto not_capture;
+    case V4L2_OPEN_ERROR_NOT_OUTPUT:
+      goto not_output;
+    default:
+      goto error;
+    }
+  }
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   /* ERRORS */
 stat_failed:
@@ -653,6 +788,10 @@ error:
     }
     /* empty lists */
     gst_v4l2_empty_lists (v4l2object);
+
+#ifdef GST_EXT_V4L2SRC_MODIFIED
+    globfree(&glob_buf);
+#endif /* GST_EXT_V4L2SRC_MODIFIED */
 
     return FALSE;
   }
