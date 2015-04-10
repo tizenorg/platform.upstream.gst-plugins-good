@@ -124,6 +124,9 @@ AG_GST_CHECK_DOWHILE_MACROS
 AC_PATH_PROG(VALGRIND_PATH, valgrind, no)
 AM_CONDITIONAL(HAVE_VALGRIND, test ! "x$VALGRIND_PATH" = "xno")
 
+dnl check for gobject-introspection
+GOBJECT_INTROSPECTION_CHECK([1.31.1])
+
 dnl check for documentation tools
 GTK_DOC_CHECK([1.12])
 AG_GST_PLUGIN_DOCS([1.12])
@@ -1083,6 +1086,9 @@ sys/sunaudio/Makefile
 sys/v4l2/Makefile
 sys/waveform/Makefile
 sys/ximage/Makefile
+gst-libs/Makefile
+gst-libs/gst/Makefile
+gst-libs/gst/tuner/Makefile
 po/Makefile.in
 tests/Makefile
 tests/check/Makefile
@@ -1106,7 +1112,10 @@ docs/Makefile
 docs/plugins/Makefile
 docs/version.entities
 pkgconfig/Makefile
+pkgconfig/gstreamer-plugins-good.pc
 pkgconfig/gstreamer-plugins-good-uninstalled.pc
+pkgconfig/gstreamer-tuner.pc
+pkgconfig/gstreamer-tuner-uninstalled.pc
 gst-plugins-good.spec
 )
 

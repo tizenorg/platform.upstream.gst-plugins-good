@@ -63,6 +63,21 @@ Enhances:       gst-plugins-good
 This package provides complementary plugins for
 %{name}.
 
+%package devel
+Summary: Development files for the GStreamer media framework "good" plug-ins
+Group: Development/Libraries
+Requires: %{name} = %{version}-%{release}
+Requires: gst-plugins-base-devel
+Obsoletes: gstreamer-plugins-good-devel < %{version}-%{release}
+Provides: gstreamer-plugins-good-devel = %{version}-%{release}
+
+%description devel
+GStreamer is a streaming media framework, based on graphs of elements which
+operate on media data.
+
+This package contains the development files for the plug-ins that
+aren't tested well enough, or the code is not of good enough quality.
+
 %prep
 %setup -q
 %setup -q -T -D -a 100
@@ -168,3 +183,12 @@ make %{?_smp_mflags}
 %defattr(-, root, root)
 %{_libdir}/gstreamer-%{gst_branch}/libgstaasink.so
 %endif
+
+%files devel
+%manifest gst-plugins-good-devel.manifest
+%defattr(-,root,root,-)
+%{_libdir}/libgsttuner-1.0.so*
+%{_includedir}/gstreamer-1.0/gst/tuner
+
+%{_libdir}/pkgconfig/gstreamer-plugins-good-1.0.pc
+%{_libdir}/pkgconfig/gstreamer-tuner-1.0.pc

@@ -16,10 +16,7 @@ libgstvideo4linux2_la_SOURCES = gstv4l2.c \
 				gstv4l2videodec.c \
 				gstv4l2vidorient.c \
 				v4l2_calls.c \
-				v4l2-utils.c \
-				tuner.c \
-				tunerchannel.c \
-				tunernorm.c
+				v4l2-utils.c
 
 libgstvideo4linux2_la_CFLAGS =   $(GST_PLUGINS_BASE_CFLAGS) \
 				 $(GST_BASE_CFLAGS) \
@@ -37,7 +34,8 @@ libgstvideo4linux2_la_LIBADD =   $(GST_PLUGINS_BASE_LIBS) \
 				 $(GST_LIBS) \
 				 $(LIBV4L2_LIBS) \
 				 $(GUDEV_LIBS) \
-				 $(LIBRT)
+				 $(LIBRT) \
+				 $(top_builddir)/gst-libs/gst/tuner/libgsttuner-$(GST_API_VERSION).la
 
 noinst_HEADERS = \
 	ext/types-compat.h \
@@ -57,8 +55,5 @@ noinst_HEADERS = \
 	gstv4l2videodec.h \
 	gstv4l2vidorient.h \
 	v4l2_calls.h \
-	v4l2-utils.h \
-	tuner.h \
-	tunerchannel.h \
-	tunernorm.h
+	v4l2-utils.h
 
