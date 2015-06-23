@@ -37,12 +37,14 @@ BuildRequires:  pkgconfig(ice)
 BuildRequires:  pkgconfig(sm)
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
+BuildRequires:  pkgconfig(vconf)
 # used by libgstvideo4linux2.so
 BuildRequires:  pkgconfig(xv)
 %endif
 
 BuildRequires:  pkgconfig(zlib)
 BuildRequires:  pkgconfig(libv4l2)
+BuildRequires:  pkgconfig(iniparser)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.5
 

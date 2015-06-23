@@ -58,6 +58,13 @@
 #include <gst/pbutils/pbutils.h>        /* only used for GST_PLUGINS_BASE_VERSION_* */
 
 #include <gst/glib-compat-private.h>
+#ifdef __TIZEN__
+#include <pulse/ext-policy.h>
+#ifdef PCM_DUMP_ENABLE
+#include <vconf.h>
+#endif
+#include <iniparser.h>
+#endif
 
 #include "pulsesink.h"
 #include "pulseutil.h"
@@ -84,8 +91,82 @@ enum
   PROP_MUTE,
   PROP_CLIENT_NAME,
   PROP_STREAM_PROPERTIES,
+#ifdef __TIZEN__
+  PROP_AUDIO_VOLUME_TYPE,
+  PROP_AUDIO_ROUTE_POLICY,
+  PROP_AUDIO_PRIORITY,
+  PROP_AUDIO_USER_ROUTE,
+  PROP_AUDIO_LATENCY,
+  PROP_AUDIO_CLOSE_HANDLE_ON_PREPARE,
+  PROP_AUDIO_SUPPORT_TYPE,
+  PROP_AUDIO_FADE_DURATION,
+#endif
   PROP_LAST
 };
+
+#ifdef __TIZEN__
+#define MEDIA_POLICY_AUTO                   "auto"
+#define MEDIA_POLICY_PHONE                  "phone"
+#define MEDIA_POLICY_ALL                    "all"
+
+#define PULSESINK_MID_LATENCY               150000
+#define PULSESINK_HIGH_LATENCY              400000
+#define PULSESINK_VERY_HIGH_LATENCY         2000000
+#define PULSESINK_WAIT_TIME_FADING          25000
+
+#ifdef PCM_DUMP_ENABLE
+#define GST_PULSESINK_DUMP_VCONF_KEY            "memory/private/sound/pcm_dump"
+#define GST_PULSESINK_DUMP_INPUT_PATH_PREFIX    "/tmp/dump_pulsesink_in_"
+#define GST_PULSESINK_DUMP_OUTPUT_PATH_PREFIX   "/tmp/dump_pulsesink_out_"
+#define GST_PULSESINK_DUMP_INPUT_FLAG           0x00000400
+#define GST_PULSESINK_DUMP_OUTPUT_FLAG          0x00000800
+#endif
+
+typedef enum  {
+  PULSESINK_AUDIOROUTE_USE_EXTERNAL_SETTING = -1,
+  PULSESINK_AUDIOROUTE_PLAYBACK_NORMAL,
+  PULSESINK_AUDIOROUTE_PLAYBACK_ALERT,
+  PULSESINK_AUDIOROUTE_PLAYBACK_HEADSET_ONLY
+}GstPulseSinkAudioRoutePolicy;
+
+typedef enum  {
+  PULSESINK_USERROUTE_DEFAULT = 0,
+  PULSESINK_USERROUTE_AUTO = 0,
+  PULSESINK_USERROUTE_PHONE,
+  PULSESINK_USERROUTE_ALL
+}GstPulseSinkUserRoutePolicy;
+
+typedef enum {
+  PULSESINK_LATENCY_LOW,
+  PULSESINK_LATENCY_MID,
+  PULSESINK_LATENCY_HIGH,
+  PULSESINK_LATENCY_VERY_HIGH,
+} GstPulseSinkLatency;
+
+typedef enum  {
+  PULSESINK_AUDIO_UNMUTE = 0,
+  PULSESINK_AUDIO_MUTE,
+#ifdef FADE_FEATURE
+  PULSESINK_AUDIO_MUTE_WITH_FADEDOWN_EFFECT,
+#endif
+}GstPulseSinkAudioMute;
+
+typedef enum {
+  PULSESINK_VOLUME_TYPE_SYSTEM,
+  PULSESINK_VOLUME_TYPE_NOTIFICATION,
+  PULSESINK_VOLUME_TYPE_ALARM,
+  PULSESINK_VOLUME_TYPE_RINGTONE,
+  PULSESINK_VOLUME_TYPE_MEDIA,
+  PULSESINK_VOLUME_TYPE_CALL,
+  PULSESINK_VOLUME_TYPE_VOIP,
+  PULSESINK_VOLUME_TYPE_SVOICE,
+  PULSESINK_VOLUME_TYPE_FIXED,
+  PULSESINK_VOLUME_TYPE_EXT_SYSTEM_JAVA,
+  PULSESINK_VOLUME_TYPE_NUM,
+  PULSESINK_VOLUME_TYPE_MAX = PULSESINK_VOLUME_TYPE_NUM
+} GstPulseSinkVolumeType;
+
+#endif /* __TIZEN__ */
 
 #define GST_TYPE_PULSERING_BUFFER        \
         (gst_pulseringbuffer_get_type())
@@ -612,6 +693,15 @@ gst_pulseringbuffer_close_device (GstAudioRingBuffer * buf)
   gst_pulsering_destroy_context (pbuf);
   pa_threaded_mainloop_unlock (mainloop);
 
+#ifdef __TIZEN__
+#ifdef PCM_DUMP_ENABLE
+  if (psink->dump_fd_input) {
+    fclose(psink->dump_fd_input);
+    psink->dump_fd_input = NULL;
+  }
+#endif
+#endif /* __TIZEN__ */
+
   GST_LOG_OBJECT (psink, "closed device");
 
   return TRUE;
@@ -899,6 +989,13 @@ gst_pulseringbuffer_acquire (GstAudioRingBuffer * buf,
   gchar print_buf[PA_FORMAT_INFO_SNPRINT_MAX];
 #endif
 
+#ifdef __TIZEN__
+  int vol,gain;
+  const char *policy_str = NULL;
+  const char *cur_policy = NULL;
+  pa_sample_spec ss;
+#endif
+
   psink = GST_PULSESINK_CAST (GST_OBJECT_PARENT (buf));
   pbuf = GST_PULSERING_BUFFER_CAST (buf);
 
@@ -937,7 +1034,88 @@ gst_pulseringbuffer_acquire (GstAudioRingBuffer * buf,
   if (psink->stream_name)
     name = psink->stream_name;
   else
+#ifdef __TIZEN__
+    name = psink->latency == PULSESINK_LATENCY_HIGH ? "HIGH LATENCY Playback" : "MID LATENCY Playback";
+#else
     name = "Playback Stream";
+#endif
+
+#ifdef __TIZEN__
+#ifdef PCM_DUMP_ENABLE
+  if (psink->need_dump_input == TRUE && psink->dump_fd_input == NULL) {
+    char *suffix , *dump_path;
+    GDateTime *time = g_date_time_new_now_local();
+
+    suffix = g_date_time_format(time, "%m%d_%H%M%S");
+    dump_path = g_strdup_printf("%s_%s_%dch_%dhz_%s.pcm", GST_PULSESINK_DUMP_INPUT_PATH_PREFIX,
+      (psink->latency == PULSESINK_LATENCY_HIGH) ? "high" : "mid", pbuf->channels, spec->rate, suffix);
+
+    psink->dump_fd_input = fopen(dump_path, "w+");
+
+    g_free(suffix);
+    g_free(dump_path);
+    g_date_time_unref(time);
+  }
+#endif /* __TIZEN__ */
+
+  if (!psink->proplist)
+    psink->proplist = pa_proplist_new();
+
+  /* add gain and volume to proplist */
+  vol = psink->volume_type & 0x000000FF;
+  gain = (psink->volume_type >> 8) & 0x000000FF;
+  GST_INFO("Tizen volume & gain type : vol(%d), gain(%d), nvalue(%x)", vol, gain, psink->volume_type);
+  pa_proplist_setf(psink->proplist, PA_PROP_MEDIA_TIZEN_VOLUME_TYPE, "%d", vol);
+  pa_proplist_setf(psink->proplist, PA_PROP_MEDIA_TIZEN_GAIN_TYPE, "%d", gain);
+
+  /* set media policy */
+  cur_policy = pa_proplist_gets(psink->proplist, PA_PROP_MEDIA_POLICY);
+  GST_INFO(" Tizen current media policy = [%s]", cur_policy);
+
+  if (cur_policy == NULL || (cur_policy && strlen(cur_policy) == 0)) {
+    /* FIXME : this code will moved to HAL later */
+    /*
+    GST_WARNING_OBJECT (psink, "latency=%d, format=%d, width=%d, rate=%d, policy(%s)",
+                                         psink->latency, spec->format, spec->width, spec->rate, cur_policy);
+    */
+    GST_WARNING_OBJECT (psink, "latency=%d, policy(%s)", psink->latency, cur_policy);
+
+    if (psink->latency >= PULSESINK_LATENCY_HIGH) {
+      /* FIXME : Move to HAL */
+      /*
+      if (spec->format == GST_S24_LE && spec->width == 32 && spec->rate >= 44100) {
+        pa_proplist_sets(psink->proplist, PA_PROP_MEDIA_POLICY, "auto");
+      } else {
+        pa_proplist_sets(psink->proplist, PA_PROP_MEDIA_POLICY, "high-latency");
+      }
+      */
+      pa_proplist_sets(psink->proplist, PA_PROP_MEDIA_POLICY, "high-latency");
+
+      } else {
+      /* low or mid */
+        if (PULSESINK_USERROUTE_AUTO == psink->user_route) {
+          if (vol == PULSESINK_VOLUME_TYPE_NOTIFICATION
+              || vol == PULSESINK_VOLUME_TYPE_ALARM) {
+            policy_str = MEDIA_POLICY_ALL;
+          } else if (vol == PULSESINK_VOLUME_TYPE_CALL
+                         || vol == PULSESINK_VOLUME_TYPE_RINGTONE
+                         || vol == PULSESINK_VOLUME_TYPE_FIXED) {
+            policy_str = MEDIA_POLICY_PHONE;
+          } else {
+            policy_str = MEDIA_POLICY_AUTO;
+          }
+        } else if (PULSESINK_USERROUTE_PHONE == psink->user_route) {
+          policy_str = MEDIA_POLICY_PHONE;
+        } else if (PULSESINK_USERROUTE_ALL == psink->user_route) {
+          policy_str = MEDIA_POLICY_ALL;
+        }
+        pa_proplist_sets(psink->proplist, PA_PROP_MEDIA_POLICY, policy_str);
+        GST_INFO(" Tizen set property user-route : (%s)", policy_str);
+      }/* End low or mid */
+    } else {
+    GST_ERROR_OBJECT (psink, " Tizen proplist exists : [%s]", pa_proplist_to_string(psink->proplist));
+  }
+#endif /* __TIZEN__ */
 
   /* create a stream */
   formats[0] = pbuf->format;
@@ -1866,6 +2044,98 @@ gst_pulsesink_payload (GstAudioBaseSink * sink, GstBuffer * buf)
   }
 }
 
+#ifdef __TIZEN__
+GType
+gst_pulsesink_audio_route_get_type (void)
+{
+	static GType playback_audio_route_type = 0;
+	static const GEnumValue playback_audio_route[] = {
+		{PULSESINK_AUDIOROUTE_USE_EXTERNAL_SETTING, "Use external sound path", "external"},
+		{PULSESINK_AUDIOROUTE_PLAYBACK_NORMAL, "Auto change between speaker & earphone", "normal"},
+		{PULSESINK_AUDIOROUTE_PLAYBACK_ALERT, "Play via both speaker & earphone", "alert"},
+		{PULSESINK_AUDIOROUTE_PLAYBACK_HEADSET_ONLY, "Play via earphone only", "headset"},
+		{0, NULL, NULL},
+	};
+
+	if (!playback_audio_route_type) {
+		playback_audio_route_type =
+			g_enum_register_static ("GstPulseSinkAudioRoutePolicy", playback_audio_route);
+	}
+	return playback_audio_route_type;
+}
+
+GType
+gst_pulsesink_user_route_get_type (void)
+{
+	static GType user_route_type = 0;
+	static const GEnumValue user_route[] = {
+		{PULSESINK_USERROUTE_AUTO, "Route automatically", "auto"},
+		{PULSESINK_USERROUTE_PHONE, "Route to phone only", "phone"},
+		{PULSESINK_USERROUTE_ALL, "Route to all", "all"},
+		{0, NULL, NULL},
+	};
+
+	if (!user_route_type) {
+		user_route_type =
+			g_enum_register_static ("GstPulseSinkUserRoutePolicy",user_route);
+	}
+	return user_route_type;
+}
+
+GType
+gst_pulsesink_latency_get_type (void)
+{
+	static GType pulseaudio_latency_type = 0;
+	static const GEnumValue pulseaudio_latency[] = {
+		{PULSESINK_LATENCY_LOW, "Low latency", "low"},
+		{PULSESINK_LATENCY_MID, "Mid latency", "mid"},
+		{PULSESINK_LATENCY_HIGH, "High latency", "high"},
+		{PULSESINK_LATENCY_VERY_HIGH, "Very High latency", "very-high"},
+		{0, NULL, NULL},
+	};
+
+	if (!pulseaudio_latency_type) {
+		pulseaudio_latency_type =
+			g_enum_register_static ("GstPulseSinkLatency", pulseaudio_latency);
+	}
+	return pulseaudio_latency_type;
+}
+
+GType
+gst_pulsesink_audio_mute_get_type (void)
+{
+	static GType avaudio_mute_type = 0;
+	static const GEnumValue avaudio_mute[] = {
+		{PULSESINK_AUDIO_UNMUTE, "Unmute", "unmute"},
+		{PULSESINK_AUDIO_MUTE, "Mute immediately", "mute"},
+#ifdef FADE_FEATURE
+		{PULSESINK_AUDIO_MUTE_WITH_FADEDOWN_EFFECT, "Mute with fadedown effect", "fadedown"},
+#endif
+		{0, NULL, NULL},
+	};
+
+	if (!avaudio_mute_type) {
+		avaudio_mute_type =
+			g_enum_register_static ("GstPulseSinkAudioMute", avaudio_mute);
+	}
+	return avaudio_mute_type;
+}
+
+#ifdef PCM_DUMP_ENABLE
+static gboolean
+gst_pulsesink_pad_dump_handler (GstPad *pad, GstBuffer *buffer, gpointer data)
+{
+  GstPulseSink *psink = GST_PULSESINK_CAST (data);
+  int ret = -1;
+
+  if (psink->dump_fd_input)
+    ret = fwrite(GST_BUFFER_DATA(buffer), 1, GST_BUFFER_SIZE(buffer), psink->dump_fd_input);
+
+  return !!ret;
+}
+#endif
+#endif /* __TIZEN__ */
+
 static void
 gst_pulsesink_class_init (GstPulseSinkClass * klass)
 {
@@ -1922,11 +2192,20 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
       g_param_spec_double ("volume", "Volume",
           "Linear volume of this stream, 1.0=100%", 0.0, MAX_VOLUME,
           DEFAULT_VOLUME, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+#ifdef __TIZEN__
+  g_object_class_install_property (gobject_class,
+      PROP_MUTE,
+      g_param_spec_enum("mute", "Tizen Audio Mute",
+          "Mute state of this stream", gst_pulsesink_audio_mute_get_type(), PULSESINK_AUDIO_UNMUTE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS ));
+#else
   g_object_class_install_property (gobject_class,
       PROP_MUTE,
       g_param_spec_boolean ("mute", "Mute",
           "Mute state of this stream", DEFAULT_MUTE,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+#endif /* __TIZEN__ */
 
   /**
    * GstPulseSink:client-name:
@@ -1962,6 +2241,54 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
       g_param_spec_boxed ("stream-properties", "stream properties",
           "list of pulseaudio stream properties",
           GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+#ifdef __TIZEN__
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_VOLUME_TYPE,
+      g_param_spec_int ("volumetype", "Volume Type",
+          "Select tizen audio software volume type", 0, G_MAXINT, 4,
+          G_PARAM_READWRITE));
+
+/* FIXME : Remove property */
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_ROUTE_POLICY,
+      g_param_spec_enum("audio-route", "Audio Route Policy",
+          "Audio route policy of system", gst_pulsesink_audio_route_get_type(), PULSESINK_AUDIOROUTE_USE_EXTERNAL_SETTING,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS ));
+
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_PRIORITY,
+      g_param_spec_int ("priority", "Avsystem Sound Priority",
+          "Avsystem sound priority", 0, G_MAXINT, 0,
+          G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_USER_ROUTE,
+      g_param_spec_enum("user-route", "User Route Policy",
+          "Select tizen user route policy", gst_pulsesink_user_route_get_type(), PULSESINK_USERROUTE_DEFAULT,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_LATENCY,
+      g_param_spec_enum("latency", "Audio Backend Latency",
+          "Audio backend latency", gst_pulsesink_latency_get_type(), PULSESINK_LATENCY_MID,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS ));
+
+  g_object_class_install_property (gobject_class, PROP_AUDIO_CLOSE_HANDLE_ON_PREPARE,
+      g_param_spec_boolean ("close-handle-on-prepare", "Close Handle on Prepare",
+          "deprecated interface",
+          FALSE, G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class, PROP_AUDIO_SUPPORT_TYPE,
+      g_param_spec_int ("supporttype", "supporttype Type",
+          "Select avsystem audio support type", 0, G_MAXINT,
+          0, G_PARAM_READWRITE));
+
+  g_object_class_install_property (gobject_class, PROP_AUDIO_FADE_DURATION,
+      g_param_spec_int ("fade_duration", "fade duration time",
+          "Set fade duration time(msec)", 0, G_MAXINT,
+          20, G_PARAM_READWRITE));
+#endif /* __TIZEN__ */
 
   gst_element_class_set_static_metadata (gstelement_class,
       "PulseAudio Audio Sink",
@@ -2340,9 +2667,41 @@ info_failed:
   }
 }
 
+#ifdef __TIZEN__
+static void
+gst_pulsesink_get_configuation(GstPulseSink * pulsesink)
+{
+  dictionary * dict = NULL;
+  const char* path = "/usr/etc/mmfw_audio_config.ini";
+
+  dict = iniparser_load(path);
+  if (!dict) {
+    GST_WARNING_OBJECT(pulsesink, "open failed. path(%s). use default latency", path);
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID] = PULSESINK_MID_LATENCY;
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH] = PULSESINK_HIGH_LATENCY;
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_VERY_HIGH] = PULSESINK_VERY_HIGH_LATENCY;
+  } else {
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID] = iniparser_getint(dict, "pulsesink:mid_buffer_time", PULSESINK_MID_LATENCY);
+    pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_MID] = iniparser_getint(dict, "pulsesink:mid_latency_time", 0);
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH] = iniparser_getint(dict, "pulsesink:high_buffer_time", PULSESINK_HIGH_LATENCY);
+    pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_HIGH] = iniparser_getint(dict, "pulsesink:high_latency_time", 0);
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_VERY_HIGH] = iniparser_getint(dict, "pulsesink:vhigh_buffer_time", PULSESINK_VERY_HIGH_LATENCY);
+    pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_VERY_HIGH] = iniparser_getint(dict, "pulsesink:vhigh_latency_time", 0);
+  }
+  iniparser_freedict(dict);
+}
+#endif /* __TIZEN__ */
+
 static void
 gst_pulsesink_init (GstPulseSink * pulsesink)
 {
+#ifdef __TIZEN__
+#ifdef PCM_DUMP_ENABLE
+  GstPad *sinkpad = NULL;
+  int vconf_dump = 0;
+#endif
+#endif /* __TIZEN__ */
+
   pulsesink->server = NULL;
   pulsesink->device = NULL;
   pulsesink->device_info.description = NULL;
@@ -2357,6 +2716,27 @@ gst_pulsesink_init (GstPulseSink * pulsesink)
   pulsesink->mute_set = FALSE;
 
   pulsesink->notify = 0;
+#ifdef __TIZEN__
+  /* default volume is media because webkit use pulsesink without player. */
+  pulsesink->volume_type = 4;
+  pulsesink->fade_stat = PULSESINK_AUDIO_UNMUTE;
+  pulsesink->fade_duration = 20;
+  pulsesink->support_type = 0;
+#ifdef PCM_DUMP_ENABLE
+  if (vconf_get_int(GST_PULSESINK_DUMP_VCONF_KEY, &vconf_dump)) {
+    GST_WARNING("vconf_get_int %s failed", GST_PULSESINK_DUMP_VCONF_KEY);
+  }
+  pulsesink->need_dump_input = vconf_dump & GST_PULSESINK_DUMP_INPUT_FLAG ? TRUE : FALSE;
+  pulsesink->dump_fd_input = NULL;
+  if (pulsesink->need_dump_input) {
+    sinkpad = gst_element_get_static_pad((GstElement *)pulsesink, "sink");
+    gst_pad_add_buffer_probe (sinkpad, G_CALLBACK (gst_pulsesink_pad_dump_handler), pulsesink);
+  }
+#endif
+  memset(pulsesink->buffer_time, 0, sizeof(pulsesink->buffer_time));
+  memset(pulsesink->latency_time, 0, sizeof(pulsesink->latency_time));
+  gst_pulsesink_get_configuation(pulsesink);
+#endif
 
   g_atomic_int_set (&pulsesink->format_lost, FALSE);
   pulsesink->format_lost_time = GST_CLOCK_TIME_NONE;
@@ -2532,6 +2912,153 @@ mute_failed:
     goto unlock;
   }
 }
+
+#ifdef __TIZEN__
+#if 0
+static void success_context_cb(pa_context *c, int success, void *userdata) {
+    pa_threaded_mainloop_signal(mainloop, 0);
+}
+
+static void
+gst_pulsesink_set_mute_sync (GstPulseSink * psink, gboolean mute)
+{
+  pa_operation *o = NULL;
+  GstPulseRingBuffer *pbuf;
+  uint32_t idx;
+
+  GST_WARNING_OBJECT (psink, "setting mute state to mute(%d)", mute);
+
+  pbuf = GST_PULSERING_BUFFER_CAST (GST_BASE_AUDIO_SINK (psink)->ringbuffer);
+  if (pbuf == NULL || pbuf->stream == NULL)
+    goto no_buffer;
+
+  if ((idx = pa_stream_get_index (pbuf->stream)) == PA_INVALID_INDEX)
+    goto no_index;
+
+  if (!(o = pa_context_set_sink_input_mute (pbuf->context, idx,
+              mute, success_context_cb, NULL)))
+    goto mute_failed;
+
+  while (pa_operation_get_state (o) == PA_OPERATION_RUNNING) {
+    pa_threaded_mainloop_wait (mainloop);
+    if (gst_pulsering_is_dead (psink, pbuf, TRUE))
+      goto mute_failed;
+  }
+
+  /* We don't really care about the result of this call */
+unlock:
+
+  if (o)
+    pa_operation_unref (o);
+
+  /* wait for fading time */
+  usleep(PULSESINK_WAIT_TIME_FADING);
+
+  return;
+
+  /* ERRORS */
+no_mainloop:
+  {
+    psink->mute = mute;
+    psink->mute_set = FALSE;
+
+    GST_DEBUG_OBJECT (psink, "we have no mainloop");
+    return;
+  }
+no_buffer:
+  {
+    psink->mute = mute;
+    psink->mute_set = FALSE;
+
+    GST_DEBUG_OBJECT (psink, "we have no ringbuffer");
+    goto unlock;
+  }
+no_index:
+  {
+    GST_DEBUG_OBJECT (psink, "we don't have a stream index");
+    goto unlock;
+  }
+mute_failed:
+  {
+    GST_ELEMENT_ERROR (psink, RESOURCE, FAILED,
+        ("pa_stream_set_sink_input_mute() failed: %s",
+            pa_strerror (pa_context_errno (pbuf->context))), (NULL));
+    goto unlock;
+  }
+}
+#endif
+#ifdef FADE_FEATURE
+static void
+gst_pulsesink_set_mute_with_fade (GstPulseSink * psink, int fade)
+{
+  pa_operation *o = NULL;
+  GstPulseRingBuffer *pbuf;
+  uint32_t idx;
+
+  if (!mainloop)
+    goto no_mainloop;
+
+  pa_threaded_mainloop_lock (mainloop);
+
+  GST_WARNING_OBJECT(psink, "mute(fade) is comming mute(%d), fade_stat(%d), fade_duration(%d msec)",
+            fade, psink->fade_stat, psink->fade_duration);
+
+  pbuf = GST_PULSERING_BUFFER_CAST (GST_BASE_AUDIO_SINK (psink)->ringbuffer);
+  if (pbuf == NULL || pbuf->stream == NULL)
+    goto no_buffer;
+
+  if ((idx = pa_stream_get_index (pbuf->stream)) == PA_INVALID_INDEX)
+    goto no_index;
+
+  GST_INFO_OBJECT(psink, "context(%p) idx(%d)", pbuf->context, idx);
+  if (!(o = pa_ext_policy_volume_fade (pbuf->context, idx,
+    fade==PULSESINK_AUDIO_MUTE_WITH_FADEDOWN_EFFECT ? PA_TIZEN_FADEDOWN_REQUEST : PA_TIZEN_FADEUP_REQUEST, psink->fade_duration, NULL, NULL))) {
+    GST_ERROR_OBJECT(psink, "pa_ext_policy_volume_fade failed. stream(%d), fade(%d)", idx, fade);
+    goto mute_failed;
+  } else {
+    psink->fade_stat = fade;
+  }
+  GST_INFO_OBJECT(psink, "end (%d)", psink->fade_stat);
+
+  /* We don't really care about the result of this call */
+unlock:
+
+  if (o)
+    pa_operation_unref (o);
+
+  pa_threaded_mainloop_unlock (mainloop);
+
+  /* should be returned quickly. */
+  /* sleep(duration); */
+
+  return;
+
+  /* ERRORS */
+no_mainloop:
+  {
+    GST_DEBUG_OBJECT (psink, "we have no mainloop");
+    return;
+  }
+no_buffer:
+  {
+    GST_DEBUG_OBJECT (psink, "we have no ringbuffer");
+    goto unlock;
+  }
+no_index:
+  {
+    GST_DEBUG_OBJECT (psink, "we don't have a stream index");
+    goto unlock;
+  }
+mute_failed:
+  {
+    GST_ELEMENT_ERROR (psink, RESOURCE, FAILED,
+        ("pa_ext_policy_volume_fade() failed: %s",
+            pa_strerror (pa_context_errno (pbuf->context))), (NULL));
+    goto unlock;
+  }
+}
+#endif
+#endif /* __TIZEN__ */
 
 static void
 gst_pulsesink_sink_input_info_cb (pa_context * c, const pa_sink_input_info * i,
@@ -2860,9 +3387,18 @@ gst_pulsesink_set_property (GObject * object,
     case PROP_VOLUME:
       gst_pulsesink_set_volume (pulsesink, g_value_get_double (value));
       break;
+#ifdef __TIZEN__
+    case PROP_MUTE: {
+        int nvalue = g_value_get_enum(value);
+        gst_pulsesink_set_mute(pulsesink, nvalue==TRUE ? 1 : 0);
+        GST_WARNING_OBJECT(pulsesink, "mute end");
+        break;
+    }
+#else
     case PROP_MUTE:
       gst_pulsesink_set_mute (pulsesink, g_value_get_boolean (value));
       break;
+#endif /* __TIZEN__ */
     case PROP_CLIENT_NAME:
       g_free (pulsesink->client_name);
       if (!g_value_get_string (value)) {
@@ -2881,6 +3417,83 @@ gst_pulsesink_set_property (GObject * object,
         pa_proplist_free (pulsesink->proplist);
       pulsesink->proplist = gst_pulse_make_proplist (pulsesink->properties);
       break;
+#ifdef __TIZEN__
+    case PROP_AUDIO_VOLUME_TYPE:
+    {
+      char vol = 0;
+      char gain = 0;
+      gint nvalue = g_value_get_int(value);
+
+      pulsesink->volume_type = nvalue;
+      break;
+    }
+    case PROP_AUDIO_ROUTE_POLICY:
+        break;
+    case PROP_AUDIO_PRIORITY:
+        break;
+    case PROP_AUDIO_USER_ROUTE:
+    {
+      /*
+      gint nvalue = g_value_get_enum(value);
+      pulsesink->user_route = nvalue;
+      */
+      GST_WARNING_OBJECT(pulsesink, "deprecated PROP_AUDIO_USER_ROUTE");
+      break;
+    }
+    case PROP_AUDIO_LATENCY: {
+      gint nvalue = 0;
+      char policy[32] = { '\0', };
+      if (!pulsesink->proplist)
+        pulsesink->proplist = pa_proplist_new();
+
+      nvalue = g_value_get_enum(value);
+      if(nvalue >= PULSESINK_LATENCY_HIGH) {
+        sprintf(policy, "%s", "hight-latency");
+        pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_POLICY, policy);
+/*
+      if(pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH])
+        GST_BASE_AUDIO_SINK (pulsesink)->buffer_time = pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH];
+      if(pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_HIGH])
+        GST_BASE_AUDIO_SINK (pulsesink)->latency_time = pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_HIGH];
+      } else {
+        if(pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID])
+          GST_BASE_AUDIO_SINK (pulsesink)->buffer_time = pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID];
+        if(pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_MID])
+          GST_BASE_AUDIO_SINK (pulsesink)->latency_time = pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_MID];
+      }
+      GST_WARNING_OBJECT(pulsesink,"buffer information : latency(%d), buffer_time(%lld), latency_time(%lld)", nvalue,
+                         GST_BASE_AUDIO_SINK (pulsesink)->buffer_time, GST_BASE_AUDIO_SINK (pulsesink)->latency_time);
+*/
+      }
+      pulsesink->latency = nvalue;
+    }
+      GST_WARNING_OBJECT(pulsesink, "deprecated PROP_AUDIO_LATENCY");
+      break;
+    case PROP_AUDIO_CLOSE_HANDLE_ON_PREPARE:
+      /* will be deprecated */
+      GST_WARNING_OBJECT(pulsesink, "deprecated PROP_AUDIO_CLOSE_HANDLE_ON_PREPARE");
+      break;
+    case PROP_AUDIO_SUPPORT_TYPE:
+      /* will be deprecated */
+      /*
+      pulsesink->support_type = g_value_get_int(value);
+      if(pulsesink->support_type == 4) {
+      /* FIXME: call volume (VT call) */
+      /*
+        pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_POLICY, "voip");
+        GST_WARNING_OBJECT(pulsesink, "support type(%d), use voip(videocall) policy", pulsesink->support_type);
+      }
+      */
+      GST_WARNING_OBJECT(pulsesink, "deprecated PROP_AUDIO_SUPPORT_TYPE");
+      break;
+    case PROP_AUDIO_FADE_DURATION:
+      /* will be deprecated */
+      /*
+      pulsesink->fade_duration = g_value_get_int(value);
+      */
+      GST_WARNING_OBJECT(pulsesink, "deprecated PROP_AUDIO_FADE_DURATION");
+      break;
+#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -2923,10 +3536,14 @@ gst_pulsesink_get_property (GObject * object,
     }
     case PROP_MUTE:
     {
+#ifdef __TIZEN__
+      g_value_set_enum(value, pulsesink->mute);
+#else
       gboolean mute;
 
       gst_pulsesink_get_sink_input_info (pulsesink, NULL, &mute);
       g_value_set_boolean (value, mute);
+#endif
       break;
     }
     case PROP_CLIENT_NAME:
@@ -2935,6 +3552,33 @@ gst_pulsesink_get_property (GObject * object,
     case PROP_STREAM_PROPERTIES:
       gst_value_set_structure (value, pulsesink->properties);
       break;
+
+#ifdef __TIZEN__
+    case PROP_AUDIO_VOLUME_TYPE:
+      g_value_set_int (value, pulsesink->volume_type);
+      break;
+    case PROP_AUDIO_ROUTE_POLICY:
+      break;
+    case PROP_AUDIO_PRIORITY:
+      break;
+    case PROP_AUDIO_USER_ROUTE:
+      GST_ERROR("get property user rouyte");
+      g_value_set_enum (value, pulsesink->user_route);
+      break;
+    case PROP_AUDIO_LATENCY:
+      g_value_set_enum (value, pulsesink->latency);
+      break;
+    case PROP_AUDIO_CLOSE_HANDLE_ON_PREPARE:
+      g_value_set_boolean(value, FALSE);
+      break;
+    case PROP_AUDIO_SUPPORT_TYPE:
+      g_value_set_int(value, pulsesink->support_type);
+      break;
+    case PROP_AUDIO_FADE_DURATION:
+      g_value_set_int(value, pulsesink->fade_duration);
+      break;
+#endif /* __TIZEN__ */
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -3255,6 +3899,14 @@ gst_pulsesink_change_state (GstElement * element, GstStateChange transition)
     goto state_failure;
 
   switch (transition) {
+#ifdef __TIZEN__
+    case GST_STATE_CHANGE_PAUSED_TO_PLAYING:
+#ifdef FADE_FEATURE
+      if(pulsesink->fade_stat == PULSESINK_AUDIO_MUTE_WITH_FADEDOWN_EFFECT) {
+        gst_pulsesink_set_mute_with_fade(pulsesink, PULSESINK_AUDIO_UNMUTE);
+      }
+#endif
+#endif
     case GST_STATE_CHANGE_PAUSED_TO_READY:
       /* format_lost is reset in release() in audiobasesink */
       gst_element_post_message (element,
