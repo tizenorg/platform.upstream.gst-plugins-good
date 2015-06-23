@@ -58,7 +58,12 @@
 #include <gst/pbutils/pbutils.h>        /* only used for GST_PLUGINS_BASE_VERSION_* */
 
 #include <gst/glib-compat-private.h>
-
+#ifdef __TIZEN__
+#ifdef PCM_DUMP_ENABLE
+#include <vconf.h>
+#endif
+#include <iniparser.h>
+#endif /* __TIZEN__ */
 #include "pulsesink.h"
 #include "pulseutil.h"
 
@@ -84,8 +89,33 @@ enum
   PROP_MUTE,
   PROP_CLIENT_NAME,
   PROP_STREAM_PROPERTIES,
+#ifdef __TIZEN__
+  PROP_AUDIO_LATENCY,
+#endif /* __TIZEN__ */
   PROP_LAST
 };
+
+#ifdef __TIZEN__
+#define PULSESINK_MID_LATENCY               150000
+#define PULSESINK_HIGH_LATENCY              400000
+#define PULSESINK_VERY_HIGH_LATENCY         2000000
+#define PULSESINK_WAIT_TIME_FADING          25000
+
+#ifdef PCM_DUMP_ENABLE
+#define GST_PULSESINK_DUMP_VCONF_KEY            "memory/private/sound/pcm_dump"
+#define GST_PULSESINK_DUMP_INPUT_PATH_PREFIX    "/tmp/dump_pulsesink_in_"
+#define GST_PULSESINK_DUMP_OUTPUT_PATH_PREFIX   "/tmp/dump_pulsesink_out_"
+#define GST_PULSESINK_DUMP_INPUT_FLAG           0x00000400
+#define GST_PULSESINK_DUMP_OUTPUT_FLAG          0x00000800
+#endif
+
+typedef enum {
+  PULSESINK_LATENCY_LOW,
+  PULSESINK_LATENCY_MID,
+  PULSESINK_LATENCY_HIGH,
+  PULSESINK_LATENCY_VERY_HIGH,
+} GstPulseSinkLatency;
+#endif /* __TIZEN__ */
 
 #define GST_TYPE_PULSERING_BUFFER        \
         (gst_pulseringbuffer_get_type())
@@ -612,6 +642,13 @@ gst_pulseringbuffer_close_device (GstAudioRingBuffer * buf)
   gst_pulsering_destroy_context (pbuf);
   pa_threaded_mainloop_unlock (mainloop);
 
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+  if (psink->dump_fd_input) {
+    fclose(psink->dump_fd_input);
+    psink->dump_fd_input = NULL;
+  }
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
+
   GST_LOG_OBJECT (psink, "closed device");
 
   return TRUE;
@@ -937,7 +974,28 @@ gst_pulseringbuffer_acquire (GstAudioRingBuffer * buf,
   if (psink->stream_name)
     name = psink->stream_name;
   else
+#ifdef __TIZEN__
+    name = psink->latency == PULSESINK_LATENCY_HIGH ? "HIGH LATENCY Playback" : "MID LATENCY Playback";
+#else
     name = "Playback Stream";
+#endif /* __TIZEN__ */
+
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+  if (psink->need_dump_input == TRUE && psink->dump_fd_input == NULL) {
+    char *suffix , *dump_path;
+    GDateTime *time = g_date_time_new_now_local();
+
+    suffix = g_date_time_format(time, "%m%d_%H%M%S");
+    dump_path = g_strdup_printf("%s_%s_%dch_%dhz_%s.pcm", GST_PULSESINK_DUMP_INPUT_PATH_PREFIX,
+      (psink->latency == PULSESINK_LATENCY_HIGH) ? "high" : "mid", pbuf->channels, spec->rate, suffix);
+
+    psink->dump_fd_input = fopen(dump_path, "w+");
+
+    g_free(suffix);
+    g_free(dump_path);
+    g_date_time_unref(time);
+  }
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
   /* create a stream */
   formats[0] = pbuf->format;
@@ -1866,6 +1924,41 @@ gst_pulsesink_payload (GstAudioBaseSink * sink, GstBuffer * buf)
   }
 }
 
+#ifdef __TIZEN__
+GType
+gst_pulsesink_latency_get_type (void)
+{
+  static GType pulseaudio_latency_type = 0;
+  static const GEnumValue pulseaudio_latency[] = {
+    {PULSESINK_LATENCY_LOW, "Low latency", "low"},
+    {PULSESINK_LATENCY_MID, "Mid latency", "mid"},
+    {PULSESINK_LATENCY_HIGH, "High latency", "high"},
+    {PULSESINK_LATENCY_VERY_HIGH, "Very High latency", "very-high"},
+    {0, NULL, NULL},
+  };
+
+  if (!pulseaudio_latency_type) {
+    pulseaudio_latency_type =
+      g_enum_register_static ("GstPulseSinkLatency", pulseaudio_latency);
+  }
+  return pulseaudio_latency_type;
+}
+
+#ifdef PCM_DUMP_ENABLE
+static gboolean
+gst_pulsesink_pad_dump_handler (GstPad *pad, GstBuffer *buffer, gpointer data)
+{
+  GstPulseSink *psink = GST_PULSESINK_CAST (data);
+  int ret = -1;
+
+  if (psink->dump_fd_input)
+    ret = fwrite(GST_BUFFER_DATA(buffer), 1, GST_BUFFER_SIZE(buffer), psink->dump_fd_input);
+
+  return !!ret;
+}
+#endif
+#endif /* __TIZEN__ */
+
 static void
 gst_pulsesink_class_init (GstPulseSinkClass * klass)
 {
@@ -1922,6 +2015,7 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
       g_param_spec_double ("volume", "Volume",
           "Linear volume of this stream, 1.0=100%", 0.0, MAX_VOLUME,
           DEFAULT_VOLUME, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
   g_object_class_install_property (gobject_class,
       PROP_MUTE,
       g_param_spec_boolean ("mute", "Mute",
@@ -1962,6 +2056,14 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
       g_param_spec_boxed ("stream-properties", "stream properties",
           "list of pulseaudio stream properties",
           GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+#ifdef __TIZEN__
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_LATENCY,
+      g_param_spec_enum("latency", "Audio Backend Latency",
+          "Audio backend latency", gst_pulsesink_latency_get_type(), PULSESINK_LATENCY_MID,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS ));
+#endif /* __TIZEN__ */
 
   gst_element_class_set_static_metadata (gstelement_class,
       "PulseAudio Audio Sink",
@@ -2340,9 +2442,39 @@ info_failed:
   }
 }
 
+#ifdef __TIZEN__
+static void
+gst_pulsesink_get_configuation(GstPulseSink * pulsesink)
+{
+  dictionary * dict = NULL;
+  const char* path = "/usr/etc/mmfw_audio_config.ini";
+
+  dict = iniparser_load(path);
+  if (!dict) {
+    GST_WARNING_OBJECT(pulsesink, "open failed. path(%s). use default latency", path);
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID] = PULSESINK_MID_LATENCY;
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH] = PULSESINK_HIGH_LATENCY;
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_VERY_HIGH] = PULSESINK_VERY_HIGH_LATENCY;
+  } else {
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID] = iniparser_getint(dict, "pulsesink:mid_buffer_time", PULSESINK_MID_LATENCY);
+    pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_MID] = iniparser_getint(dict, "pulsesink:mid_latency_time", 0);
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH] = iniparser_getint(dict, "pulsesink:high_buffer_time", PULSESINK_HIGH_LATENCY);
+    pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_HIGH] = iniparser_getint(dict, "pulsesink:high_latency_time", 0);
+    pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_VERY_HIGH] = iniparser_getint(dict, "pulsesink:vhigh_buffer_time", PULSESINK_VERY_HIGH_LATENCY);
+    pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_VERY_HIGH] = iniparser_getint(dict, "pulsesink:vhigh_latency_time", 0);
+  }
+  iniparser_freedict(dict);
+}
+#endif /* __TIZEN__ */
+
 static void
 gst_pulsesink_init (GstPulseSink * pulsesink)
 {
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+  GstPad *sinkpad = NULL;
+  int vconf_dump = 0;
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
+
   pulsesink->server = NULL;
   pulsesink->device = NULL;
   pulsesink->device_info.description = NULL;
@@ -2357,6 +2489,22 @@ gst_pulsesink_init (GstPulseSink * pulsesink)
   pulsesink->mute_set = FALSE;
 
   pulsesink->notify = 0;
+#ifdef __TIZEN__
+#ifdef PCM_DUMP_ENABLE
+  if (vconf_get_int(GST_PULSESINK_DUMP_VCONF_KEY, &vconf_dump)) {
+    GST_WARNING("vconf_get_int %s failed", GST_PULSESINK_DUMP_VCONF_KEY);
+  }
+  pulsesink->need_dump_input = vconf_dump & GST_PULSESINK_DUMP_INPUT_FLAG ? TRUE : FALSE;
+  pulsesink->dump_fd_input = NULL;
+  if (pulsesink->need_dump_input) {
+    sinkpad = gst_element_get_static_pad((GstElement *)pulsesink, "sink");
+    gst_pad_add_buffer_probe (sinkpad, G_CALLBACK (gst_pulsesink_pad_dump_handler), pulsesink);
+  }
+#endif
+  memset(pulsesink->buffer_time, 0, sizeof(pulsesink->buffer_time));
+  memset(pulsesink->latency_time, 0, sizeof(pulsesink->latency_time));
+  gst_pulsesink_get_configuation(pulsesink);
+#endif /* __TIZEN__ */
 
   g_atomic_int_set (&pulsesink->format_lost, FALSE);
   pulsesink->format_lost_time = GST_CLOCK_TIME_NONE;
@@ -2532,6 +2680,80 @@ mute_failed:
     goto unlock;
   }
 }
+
+#if 0
+static void success_context_cb(pa_context *c, int success, void *userdata) {
+    pa_threaded_mainloop_signal(mainloop, 0);
+}
+
+static void
+gst_pulsesink_set_mute_sync (GstPulseSink * psink, gboolean mute)
+{
+  pa_operation *o = NULL;
+  GstPulseRingBuffer *pbuf;
+  uint32_t idx;
+
+  GST_WARNING_OBJECT (psink, "setting mute state to mute(%d)", mute);
+
+  pbuf = GST_PULSERING_BUFFER_CAST (GST_AUDIO_BASE_SINK (psink)->ringbuffer);
+  if (pbuf == NULL || pbuf->stream == NULL)
+    goto no_buffer;
+
+  if ((idx = pa_stream_get_index (pbuf->stream)) == PA_INVALID_INDEX)
+    goto no_index;
+
+  if (!(o = pa_context_set_sink_input_mute (pbuf->context, idx,
+              mute, success_context_cb, NULL)))
+    goto mute_failed;
+
+  while (pa_operation_get_state (o) == PA_OPERATION_RUNNING) {
+    pa_threaded_mainloop_wait (mainloop);
+    if (gst_pulsering_is_dead (psink, pbuf, TRUE))
+      goto mute_failed;
+  }
+
+  /* We don't really care about the result of this call */
+unlock:
+
+  if (o)
+    pa_operation_unref (o);
+
+  /* wait for fading time */
+  usleep(PULSESINK_WAIT_TIME_FADING);
+
+  return;
+
+  /* ERRORS */
+no_mainloop:
+  {
+    psink->mute = mute;
+    psink->mute_set = FALSE;
+
+    GST_DEBUG_OBJECT (psink, "we have no mainloop");
+    return;
+  }
+no_buffer:
+  {
+    psink->mute = mute;
+    psink->mute_set = FALSE;
+
+    GST_DEBUG_OBJECT (psink, "we have no ringbuffer");
+    goto unlock;
+  }
+no_index:
+  {
+    GST_DEBUG_OBJECT (psink, "we don't have a stream index");
+    goto unlock;
+  }
+mute_failed:
+  {
+    GST_ELEMENT_ERROR (psink, RESOURCE, FAILED,
+        ("pa_stream_set_sink_input_mute() failed: %s",
+            pa_strerror (pa_context_errno (pbuf->context))), (NULL));
+    goto unlock;
+  }
+}
+#endif
 
 static void
 gst_pulsesink_sink_input_info_cb (pa_context * c, const pa_sink_input_info * i,
@@ -2840,7 +3062,6 @@ move_failed:
   }
 }
 
-
 static void
 gst_pulsesink_set_property (GObject * object,
     guint prop_id, const GValue * value, GParamSpec * pspec)
@@ -2869,18 +3090,52 @@ gst_pulsesink_set_property (GObject * object,
         GST_WARNING_OBJECT (pulsesink,
             "Empty PulseAudio client name not allowed. Resetting to default value");
         pulsesink->client_name = gst_pulse_client_name ();
-      } else
+      } else {
         pulsesink->client_name = g_value_dup_string (value);
+      }
       break;
     case PROP_STREAM_PROPERTIES:
       if (pulsesink->properties)
         gst_structure_free (pulsesink->properties);
       pulsesink->properties =
-          gst_structure_copy (gst_value_get_structure (value));
+        gst_structure_copy (gst_value_get_structure (value));
       if (pulsesink->proplist)
         pa_proplist_free (pulsesink->proplist);
       pulsesink->proplist = gst_pulse_make_proplist (pulsesink->properties);
       break;
+#ifdef __TIZEN__
+    case PROP_AUDIO_LATENCY: {
+        gint nvalue = 0;
+        if (!pulsesink->proplist)
+          pulsesink->proplist = pa_proplist_new();
+
+        nvalue = g_value_get_enum(value);
+
+        if(nvalue >= PULSESINK_LATENCY_HIGH) {
+          pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_POLICY, "hight-latency");
+
+          if(pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH]) {
+            GST_AUDIO_BASE_SINK (pulsesink)->buffer_time = pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_HIGH];
+          }
+          if(pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_HIGH]) {
+            GST_AUDIO_BASE_SINK (pulsesink)->latency_time = pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_HIGH];
+          }
+        } else {
+          if(pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID]) {
+            GST_AUDIO_BASE_SINK (pulsesink)->buffer_time = pulsesink->buffer_time[PULSESINK_LOCAL_CONFIGURATION_MID];
+          }
+          if(pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_MID]) {
+            GST_AUDIO_BASE_SINK (pulsesink)->latency_time = pulsesink->latency_time[PULSESINK_LOCAL_CONFIGURATION_MID];
+          }
+        }
+
+        GST_WARNING_OBJECT(pulsesink,"buffer information : latency(%d), buffer_time(%lld), latency_time(%lld)", nvalue,
+                GST_AUDIO_BASE_SINK (pulsesink)->buffer_time, GST_AUDIO_BASE_SINK (pulsesink)->latency_time);
+
+        pulsesink->latency = nvalue;
+        break;
+      }
+#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -2935,6 +3190,13 @@ gst_pulsesink_get_property (GObject * object,
     case PROP_STREAM_PROPERTIES:
       gst_value_set_structure (value, pulsesink->properties);
       break;
+
+#ifdef __TIZEN__
+    case PROP_AUDIO_LATENCY:
+      g_value_set_enum (value, pulsesink->latency);
+      break;
+#endif /* __TIZEN__ */
+
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
