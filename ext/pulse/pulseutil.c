@@ -358,6 +358,9 @@ make_proplist_item (GQuark field_id, const GValue * value, gpointer user_data)
     case G_TYPE_STRING:
       pa_proplist_sets (p, prop_id, g_value_get_string (value));
       break;
+    case G_TYPE_INT:
+      pa_proplist_setf (p, prop_id, "%d", g_value_get_int (value));
+      break;
     default:
       GST_WARNING ("unmapped property type %s", G_VALUE_TYPE_NAME (value));
       break;

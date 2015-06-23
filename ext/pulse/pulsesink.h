@@ -78,6 +78,14 @@ struct _GstPulseSink
 
   gint notify; /* atomic */
 
+#ifdef __TIZEN__
+  gint latency;
+#ifdef PCM_DUMP_ENABLE
+  gint need_dump_input;
+  FILE *dump_fd_input;
+#endif
+#endif
+
   const gchar *pa_version;
 
   GstStructure *properties;
