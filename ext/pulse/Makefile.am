@@ -14,6 +14,11 @@ libgstpulse_la_LIBADD = $(GST_PLUGINS_BASE_LIBS) -lgstaudio-$(GST_API_VERSION) \
 libgstpulse_la_LDFLAGS = $(GST_PLUGIN_LDFLAGS)
 libgstpulse_la_LIBTOOLFLAGS = $(GST_PLUGIN_LIBTOOLFLAGS)
 
+if PCM_DUMP_ENABLE
+libgstpulse_la_CFLAGS += $(VCONF_CFLAGS) -DPCM_DUMP_ENABLE
+libgstpulse_la_LIBADD += $(VCONF_LIBS)
+endif
+
 noinst_HEADERS = \
 	pulsesink.h \
 	pulsesrc.h \

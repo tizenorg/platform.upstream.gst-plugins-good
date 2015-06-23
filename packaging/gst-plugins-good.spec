@@ -43,6 +43,7 @@ BuildRequires:  pkgconfig(xv)
 
 BuildRequires:  pkgconfig(zlib)
 BuildRequires:  pkgconfig(libv4l2)
+BuildRequires:  pkgconfig(vconf)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.5
 
