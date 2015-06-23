@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.4.1
-Release:        2
+Release:        3
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -37,12 +37,14 @@ BuildRequires:  pkgconfig(ice)
 BuildRequires:  pkgconfig(sm)
 BuildRequires:  pkgconfig(xdamage)
 BuildRequires:  pkgconfig(xfixes)
+BuildRequires:  pkgconfig(vconf)
 # used by libgstvideo4linux2.so
 BuildRequires:  pkgconfig(xv)
 %endif
 
 BuildRequires:  pkgconfig(zlib)
 BuildRequires:  pkgconfig(libv4l2)
+BuildRequires:  pkgconfig(iniparser)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.5
 
