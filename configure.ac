@@ -250,6 +250,23 @@ fi
 AM_CONDITIONAL(HAVE_GTK, test "x$HAVE_GTK" = "xyes")
 AM_CONDITIONAL(HAVE_GTK_X11, test "x$HAVE_GTK_X11" = "xyes")
 
+AC_ARG_ENABLE(pcmdump, AC_HELP_STRING([--enable-pcmdump], [pcm dump]),
+  [
+    case "${enableval}" in
+      yes) PCM_DUMP_ENABLE=yes ;;
+      no)  PCM_DUMP_ENABLE=no ;;
+      *)   AC_MSG_ERROR(bad value ${enableval} for --enable-pcmdump) ;;
+    esac
+  ],
+  [PCM_DUMP_ENABLE=no])
+AM_CONDITIONAL([PCM_DUMP_ENABLE], [test "x$PCM_DUMP_ENABLE" = "xyes"])
+
+if test "x$PCM_DUMP_ENABLE" = "xyes"; then
+PKG_CHECK_MODULES(VCONF, vconf)
+AC_SUBST(VCONF_CFLAGS)
+AC_SUBST(VCONF_LIBS)
+fi
+
 dnl *** set variables based on configure arguments ***
 
 dnl set license and copyright notice
@@ -367,6 +384,11 @@ AG_GST_CHECK_PLUGIN(videomixer)
 AG_GST_CHECK_PLUGIN(wavenc)
 AG_GST_CHECK_PLUGIN(wavparse)
 AG_GST_CHECK_PLUGIN(y4m)
+
+#_TIZEN_
+PKG_CHECK_MODULES(INIPARSER, iniparser)
+AC_SUBST(INIPARSER_CFLAGS)
+AC_SUBST(INIPARSER_LIBS)
 
 dnl disable experimental plug-ins
 if test "x$BUILD_EXPERIMENTAL" != "xyes"; then
