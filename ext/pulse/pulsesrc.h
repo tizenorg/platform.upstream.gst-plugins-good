@@ -82,6 +82,10 @@ struct _GstPulseSrc
   gboolean paused:1;
   gboolean in_read:1;
 
+#ifdef __TIZEN__
+  gchar *latency;
+#endif /* __TIZEN__ */
+
   GstStructure *properties;
   pa_proplist *proplist;
 };
