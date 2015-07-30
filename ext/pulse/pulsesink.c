@@ -74,6 +74,9 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 #define DEFAULT_VOLUME          1.0
 #define DEFAULT_MUTE            FALSE
 #define MAX_VOLUME              10.0
+#ifdef __TIZEN__
+#define DEFAULT_AUDIO_LATENCY   "mid"
+#endif /* __TIZEN__ */
 
 enum
 {
@@ -92,34 +95,13 @@ enum
   PROP_LAST
 };
 
-#ifdef __TIZEN__
-#ifdef PCM_DUMP_ENABLE
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
 #define GST_PULSESINK_DUMP_VCONF_KEY            "memory/private/sound/pcm_dump"
 #define GST_PULSESINK_DUMP_INPUT_PATH_PREFIX    "/tmp/dump_pulsesink_in_"
 #define GST_PULSESINK_DUMP_OUTPUT_PATH_PREFIX   "/tmp/dump_pulsesink_out_"
 #define GST_PULSESINK_DUMP_INPUT_FLAG           0x00000400
 #define GST_PULSESINK_DUMP_OUTPUT_FLAG          0x00000800
-#endif
-/* stream latency */
-typedef enum {
-  AUDIO_IN_LATENCY_LOW,   /* not used in pulsesink */
-  AUDIO_IN_LATENCY_MID,   /* not used in pulsesink */
-  AUDIO_IN_LATENCY_HIGH,  /* not used in pulsesink */
-  AUDIO_IN_LATENCY_VOIP,  /* not used in pulsesink */
-  AUDIO_OUT_LATENCY_LOW,
-  AUDIO_OUT_LATENCY_MID,
-  AUDIO_OUT_LATENCY_HIGH,
-  AUDIO_OUT_LATENCY_VOIP,
-  AUDIO_LATENCY_MAX
-} StreamLatency;
-/* pulsesink latency */
-typedef enum {
-  PULSESINK_LATENCY_LOW = 0,
-  PULSESINK_LATENCY_MID,
-  PULSESINK_LATENCY_HIGH,
-  PULSESINK_LATENCY_VOIP,
-} GstPulseSinkLatency;
-#endif /* __TIZEN__ */
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
 #define GST_TYPE_PULSERING_BUFFER        \
         (gst_pulseringbuffer_get_type())
@@ -1923,27 +1905,7 @@ gst_pulsesink_payload (GstAudioBaseSink * sink, GstBuffer * buf)
   }
 }
 
-#ifdef __TIZEN__
-GType
-gst_pulsesink_latency_get_type (void)
-{
-  static GType pulseaudio_latency_type = 0;
-  static const GEnumValue pulseaudio_latency[] = {
-    {PULSESINK_LATENCY_LOW,  "Low latency",  "low"},
-    {PULSESINK_LATENCY_MID,  "Mid latency",  "mid"},
-    {PULSESINK_LATENCY_HIGH, "High latency", "high"},
-    {PULSESINK_LATENCY_VOIP, "VOIP latency", "voip"},
-    {0, NULL, NULL},
-  };
-
-  if (!pulseaudio_latency_type) {
-    pulseaudio_latency_type =
-      g_enum_register_static ("GstPulseSinkLatency", pulseaudio_latency);
-  }
-  return pulseaudio_latency_type;
-}
-
-#ifdef PCM_DUMP_ENABLE
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
 static gboolean
 gst_pulsesink_pad_dump_handler (GstPad *pad, GstBuffer *buffer, gpointer data)
 {
@@ -1955,8 +1917,7 @@ gst_pulsesink_pad_dump_handler (GstPad *pad, GstBuffer *buffer, gpointer data)
 
   return !!ret;
 }
-#endif
-#endif /* __TIZEN__ */
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
 static void
 gst_pulsesink_class_init (GstPulseSinkClass * klass)
@@ -2058,9 +2019,10 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
 #ifdef __TIZEN__
   g_object_class_install_property (gobject_class,
       PROP_AUDIO_LATENCY,
-      g_param_spec_enum("latency", "Audio Backend Latency",
-          "Audio backend latency", gst_pulsesink_latency_get_type(), PULSESINK_LATENCY_MID,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS ));
+      g_param_spec_string ("latency", "Audio Backend Latency",
+          "Audio Backend Latency (\"low\": Low Latency, \"mid\": Mid Latency, \"high\": High Latency)",
+          DEFAULT_AUDIO_LATENCY,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 #endif /* __TIZEN__ */
 
   gst_element_class_set_static_metadata (gstelement_class,
@@ -2462,7 +2424,14 @@ gst_pulsesink_init (GstPulseSink * pulsesink)
   pulsesink->mute_set = FALSE;
 
   pulsesink->notify = 0;
+
+  g_atomic_int_set (&pulsesink->format_lost, FALSE);
+  pulsesink->format_lost_time = GST_CLOCK_TIME_NONE;
+
+  pulsesink->properties = NULL;
+  pulsesink->proplist = NULL;
 #ifdef __TIZEN__
+  pulsesink->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
 #ifdef PCM_DUMP_ENABLE
   if (vconf_get_int(GST_PULSESINK_DUMP_VCONF_KEY, &vconf_dump)) {
     GST_WARNING("vconf_get_int %s failed", GST_PULSESINK_DUMP_VCONF_KEY);
@@ -2475,12 +2444,6 @@ gst_pulsesink_init (GstPulseSink * pulsesink)
   }
 #endif
 #endif /* __TIZEN__ */
-
-  g_atomic_int_set (&pulsesink->format_lost, FALSE);
-  pulsesink->format_lost_time = GST_CLOCK_TIME_NONE;
-
-  pulsesink->properties = NULL;
-  pulsesink->proplist = NULL;
 
   /* override with a custom clock */
   if (GST_AUDIO_BASE_SINK (pulsesink)->provided_clock)
@@ -2507,6 +2470,10 @@ gst_pulsesink_finalize (GObject * object)
     gst_structure_free (pulsesink->properties);
   if (pulsesink->proplist)
     pa_proplist_free (pulsesink->proplist);
+
+#ifdef __TIZEN__
+  g_free (pulsesink->latency);
+#endif /* __TIZEN__ */
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -3000,20 +2967,19 @@ gst_pulsesink_set_property (GObject * object,
       pulsesink->proplist = gst_pulse_make_proplist (pulsesink->properties);
       break;
 #ifdef __TIZEN__
-    case PROP_AUDIO_LATENCY: {
-        gint nvalue = 0;
-        if (!pulsesink->proplist)
-          pulsesink->proplist = pa_proplist_new();
-        nvalue = g_value_get_enum(value);
-        if(nvalue > PULSESINK_LATENCY_VOIP)
-          nvalue = PULSESINK_LATENCY_VOIP;
-        if(nvalue < PULSESINK_LATENCY_LOW)
-          nvalue = PULSESINK_LATENCY_LOW;
-        pa_proplist_setf(pulsesink->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, "%d", nvalue + AUDIO_OUT_LATENCY_LOW);
-        pulsesink->latency = nvalue;
-        GST_DEBUG_OBJECT(pulsesink, "latency(%d)", nvalue);
-        break;
+    case PROP_AUDIO_LATENCY:
+      g_free (pulsesink->latency);
+      pulsesink->latency = g_value_dup_string (value);
+      /* setting NULL restores the default latency */
+      if (pulsesink->latency == NULL) {
+        pulsesink->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
       }
+      if (!pulsesink->proplist) {
+        pulsesink->proplist = pa_proplist_new();
+      }
+      pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesink->latency);
+      GST_DEBUG_OBJECT(pulsesink, "latency(%s)", pulsesink->latency);
+      break;
 #endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -3071,7 +3037,7 @@ gst_pulsesink_get_property (GObject * object,
       break;
 #ifdef __TIZEN__
     case PROP_AUDIO_LATENCY:
-      g_value_set_enum (value, pulsesink->latency);
+      g_value_set_string (value, pulsesink->latency);
       break;
 #endif /* __TIZEN__ */
     default:

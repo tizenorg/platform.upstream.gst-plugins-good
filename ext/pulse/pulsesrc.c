@@ -59,6 +59,9 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 #define DEFAULT_VOLUME          1.0
 #define DEFAULT_MUTE            FALSE
 #define MAX_VOLUME              10.0
+#ifdef __TIZEN__
+#define DEFAULT_AUDIO_LATENCY   "mid"
+#endif /* __TIZEN__ */
 
 enum
 {
@@ -72,6 +75,9 @@ enum
   PROP_SOURCE_OUTPUT_INDEX,
   PROP_VOLUME,
   PROP_MUTE,
+#ifdef __TIZEN__
+  PROP_AUDIO_LATENCY,
+#endif /* __TIZEN__ */
   PROP_LAST
 };
 
@@ -242,6 +248,15 @@ gst_pulsesrc_class_init (GstPulseSrcClass * klass)
       PROP_MUTE, g_param_spec_boolean ("mute", "Mute",
           "Mute state of this stream",
           DEFAULT_MUTE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+#ifdef __TIZEN__
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_LATENCY,
+      g_param_spec_string ("latency", "Audio Backend Latency",
+          "Audio Backend Latency (\"low\": Low Latency, \"mid\": Mid Latency, \"high\": High Latency)",
+          DEFAULT_AUDIO_LATENCY,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+#endif /* __TIZEN__ */
 }
 
 static void
@@ -276,6 +291,9 @@ gst_pulsesrc_init (GstPulseSrc * pulsesrc)
 
   pulsesrc->properties = NULL;
   pulsesrc->proplist = NULL;
+#ifdef __TIZEN__
+  pulsesrc->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
+#endif /* __TIZEN__ */
 
   /* this should be the default but it isn't yet */
   gst_audio_base_src_set_slave_method (GST_AUDIO_BASE_SRC (pulsesrc),
@@ -339,6 +357,10 @@ gst_pulsesrc_finalize (GObject * object)
     gst_structure_free (pulsesrc->properties);
   if (pulsesrc->proplist)
     pa_proplist_free (pulsesrc->proplist);
+
+#ifdef __TIZEN__
+  g_free (pulsesrc->latency);
+#endif /* __TIZEN__ */
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -810,6 +832,21 @@ gst_pulsesrc_set_property (GObject * object,
     case PROP_MUTE:
       gst_pulsesrc_set_stream_mute (pulsesrc, g_value_get_boolean (value));
       break;
+#ifdef __TIZEN__
+    case PROP_AUDIO_LATENCY:
+      g_free (pulsesrc->latency);
+      pulsesrc->latency = g_value_dup_string (value);
+      /* setting NULL restores the default latency */
+      if (pulsesrc->latency == NULL) {
+        pulsesrc->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
+      }
+      if (!pulsesrc->proplist) {
+        pulsesrc->proplist = pa_proplist_new();
+      }
+      pa_proplist_sets(pulsesrc->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesrc->latency);
+      GST_DEBUG_OBJECT(pulsesrc, "latency(%s)", pulsesrc->latency);
+      break;
+#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -865,6 +902,11 @@ gst_pulsesrc_get_property (GObject * object,
       g_value_set_boolean (value, mute);
       break;
     }
+#ifdef __TIZEN__
+    case PROP_AUDIO_LATENCY:
+      g_value_set_string (value, pulsesrc->latency);
+      break;
+#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
