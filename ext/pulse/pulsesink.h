@@ -79,12 +79,12 @@ struct _GstPulseSink
   gint notify; /* atomic */
 
 #ifdef __TIZEN__
-  gint latency;
+  gchar *latency;
 #ifdef PCM_DUMP_ENABLE
   gint need_dump_input;
   FILE *dump_fd_input;
 #endif
-#endif
+#endif /* __TIZEN__ */
 
   const gchar *pa_version;
 
