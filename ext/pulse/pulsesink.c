@@ -75,7 +75,7 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 #define DEFAULT_MUTE            FALSE
 #define MAX_VOLUME              10.0
 #ifdef __TIZEN__
-#define DEFAULT_AUDIO_LATENCY   "mid"
+#define DEFAULT_AUDIO_LATENCY   "high"
 #endif /* __TIZEN__ */
 
 enum
