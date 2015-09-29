@@ -53,7 +53,7 @@
  * protocols can be controlled with the #GstRTSPSrc:protocols property.
  *
  * rtspsrc currently understands SDP as the format of the session description.
- * For each stream listed in the SDP a new rtp_stream%d pad will be created
+ * For each stream listed in the SDP a new rtp_stream\%d pad will be created
  * with caps derived from the SDP media description. This is a caps of mime type
  * "application/x-rtp" that can be connected to any available RTP depayloader
  * element.
@@ -90,7 +90,7 @@
 #include <gst/net/gstnet.h>
 #include <gst/sdp/gstsdpmessage.h>
 #include <gst/sdp/gstmikey.h>
-#include <gst/rtp/gstrtppayloads.h>
+#include <gst/rtp/rtp.h>
 
 #include "gst/gst-i18n-plugin.h"
 
@@ -164,6 +164,37 @@ gst_rtsp_src_buffer_mode_get_type (void)
   return buffer_mode_type;
 }
 
+enum _GstRtspSrcNtpTimeSource
+{
+  NTP_TIME_SOURCE_NTP,
+  NTP_TIME_SOURCE_UNIX,
+  NTP_TIME_SOURCE_RUNNING_TIME,
+  NTP_TIME_SOURCE_CLOCK_TIME
+};
+
+#define GST_TYPE_RTSP_SRC_NTP_TIME_SOURCE (gst_rtsp_src_ntp_time_source_get_type())
+static GType
+gst_rtsp_src_ntp_time_source_get_type (void)
+{
+  static GType ntp_time_source_type = 0;
+  static const GEnumValue ntp_time_source_values[] = {
+    {NTP_TIME_SOURCE_NTP, "NTP time based on realtime clock", "ntp"},
+    {NTP_TIME_SOURCE_UNIX, "UNIX time based on realtime clock", "unix"},
+    {NTP_TIME_SOURCE_RUNNING_TIME,
+          "Running time based on pipeline clock",
+        "running-time"},
+    {NTP_TIME_SOURCE_CLOCK_TIME, "Pipeline clock time", "clock-time"},
+    {0, NULL, NULL},
+  };
+
+  if (!ntp_time_source_type) {
+    ntp_time_source_type =
+        g_enum_register_static ("GstRTSPSrcNtpTimeSource",
+        ntp_time_source_values);
+  }
+  return ntp_time_source_type;
+}
+
 #define AES_128_KEY_LEN 16
 #define AES_256_KEY_LEN 32
 
@@ -197,6 +228,10 @@ gst_rtsp_src_buffer_mode_get_type (void)
 #define DEFAULT_USE_PIPELINE_CLOCK       FALSE
 #define DEFAULT_TLS_VALIDATION_FLAGS     G_TLS_CERTIFICATE_VALIDATE_ALL
 #define DEFAULT_TLS_DATABASE     NULL
+#define DEFAULT_TLS_INTERACTION     NULL
+#define DEFAULT_DO_RETRANSMISSION        TRUE
+#define DEFAULT_NTP_TIME_SOURCE  NTP_TIME_SOURCE_NTP
+#define DEFAULT_USER_AGENT       "GStreamer/" PACKAGE_VERSION
 
 enum
 {
@@ -231,7 +266,10 @@ enum
   PROP_SDES,
   PROP_TLS_VALIDATION_FLAGS,
   PROP_TLS_DATABASE,
-  PROP_LAST
+  PROP_TLS_INTERACTION,
+  PROP_DO_RETRANSMISSION,
+  PROP_NTP_TIME_SOURCE,
+  PROP_USER_AGENT
 };
 
 #define GST_TYPE_RTSP_NAT_METHOD (gst_rtsp_nat_method_get_type())
@@ -335,6 +373,31 @@ static guint gst_rtspsrc_signals[LAST_SIGNAL] = { 0 };
 #define gst_rtspsrc_parent_class parent_class
 G_DEFINE_TYPE_WITH_CODE (GstRTSPSrc, gst_rtspsrc, GST_TYPE_BIN,
     G_IMPLEMENT_INTERFACE (GST_TYPE_URI_HANDLER, gst_rtspsrc_uri_handler_init));
+
+#ifndef GST_DISABLE_GST_DEBUG
+static inline const char *
+cmd_to_string (guint cmd)
+{
+  switch (cmd) {
+    case CMD_OPEN:
+      return "OPEN";
+    case CMD_PLAY:
+      return "PLAY";
+    case CMD_PAUSE:
+      return "PAUSE";
+    case CMD_CLOSE:
+      return "CLOSE";
+    case CMD_WAIT:
+      return "WAIT";
+    case CMD_RECONNECT:
+      return "RECONNECT";
+    case CMD_LOOP:
+      return "LOOP";
+  }
+
+  return "unknown";
+}
+#endif
 
 static gboolean
 default_select_stream (GstRTSPSrc * src, guint id, GstCaps * caps)
@@ -577,9 +640,10 @@ gst_rtspsrc_class_init (GstRTSPSrcClass * klass)
 
   g_object_class_install_property (gobject_class, PROP_USE_PIPELINE_CLOCK,
       g_param_spec_boolean ("use-pipeline-clock", "Use pipeline clock",
-          "Use the pipeline running-time to set the NTP time in the RTCP SR messages",
+          "Use the pipeline running-time to set the NTP time in the RTCP SR messages"
+          "(DEPRECATED: Use ntp-time-source property)",
           DEFAULT_USE_PIPELINE_CLOCK,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS | G_PARAM_DEPRECATED));
 
   g_object_class_install_property (gobject_class, PROP_SDES,
       g_param_spec_boxed ("sdes", "SDES",
@@ -612,6 +676,61 @@ gst_rtspsrc_class_init (GstRTSPSrcClass * klass)
       g_param_spec_object ("tls-database", "TLS database",
           "TLS database with anchor certificate authorities used to validate the server certificate",
           G_TYPE_TLS_DATABASE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstRTSPSrc::tls-interaction:
+   *
+   * A #GTlsInteraction object to be used when the connection or certificate
+   * database need to interact with the user. This will be used to prompt the
+   * user for passwords where necessary.
+   *
+   * Since: 1.6
+   */
+  g_object_class_install_property (gobject_class, PROP_TLS_INTERACTION,
+      g_param_spec_object ("tls-interaction", "TLS interaction",
+          "A GTlsInteraction object to promt the user for password or certificate",
+          G_TYPE_TLS_INTERACTION, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstRTSPSrc::do-retransmission:
+   *
+   * Attempt to ask the server to retransmit lost packets according to RFC4588.
+   *
+   * Note: currently only works with SSRC-multiplexed retransmission streams
+   *
+   * Since: 1.6
+   */
+  g_object_class_install_property (gobject_class, PROP_DO_RETRANSMISSION,
+      g_param_spec_boolean ("do-retransmission", "Retransmission",
+          "Ask the server to retransmit lost packets",
+          DEFAULT_DO_RETRANSMISSION,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstRTSPSrc::ntp-time-source:
+   *
+   * allows to select the time source that should be used
+   * for the NTP time in RTCP packets
+   *
+   * Since: 1.6
+   */
+  g_object_class_install_property (gobject_class, PROP_NTP_TIME_SOURCE,
+      g_param_spec_enum ("ntp-time-source", "NTP Time Source",
+          "NTP time source for RTCP packets",
+          GST_TYPE_RTSP_SRC_NTP_TIME_SOURCE, DEFAULT_NTP_TIME_SOURCE,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+  /**
+   * GstRTSPSrc::user-agent:
+   *
+   * The string to set in the User-Agent header.
+   *
+   * Since: 1.6
+   */
+  g_object_class_install_property (gobject_class, PROP_USER_AGENT,
+      g_param_spec_string ("user-agent", "User Agent",
+          "The User-Agent string to send to the server",
+          DEFAULT_USER_AGENT, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   /**
    * GstRTSPSrc::handle-request:
@@ -756,6 +875,10 @@ gst_rtspsrc_init (GstRTSPSrc * src)
   src->sdes = NULL;
   src->tls_validation_flags = DEFAULT_TLS_VALIDATION_FLAGS;
   src->tls_database = DEFAULT_TLS_DATABASE;
+  src->tls_interaction = DEFAULT_TLS_INTERACTION;
+  src->do_retransmission = DEFAULT_DO_RETRANSMISSION;
+  src->ntp_time_source = DEFAULT_NTP_TIME_SOURCE;
+  src->user_agent = g_strdup (DEFAULT_USER_AGENT);
 
   /* get a list of all extensions */
   src->extensions = gst_rtsp_ext_list_get ();
@@ -790,6 +913,7 @@ gst_rtspsrc_finalize (GObject * object)
   g_free (rtspsrc->user_id);
   g_free (rtspsrc->user_pw);
   g_free (rtspsrc->multi_iface);
+  g_free (rtspsrc->user_agent);
 
   if (rtspsrc->sdp) {
     gst_sdp_message_free (rtspsrc->sdp);
@@ -803,6 +927,9 @@ gst_rtspsrc_finalize (GObject * object)
 
   if (rtspsrc->tls_database)
     g_object_unref (rtspsrc->tls_database);
+
+  if (rtspsrc->tls_interaction)
+    g_object_unref (rtspsrc->tls_interaction);
 
   /* free locks */
   g_rec_mutex_clear (&rtspsrc->stream_rec_lock);
@@ -1020,6 +1147,20 @@ gst_rtspsrc_set_property (GObject * object, guint prop_id, const GValue * value,
       g_clear_object (&rtspsrc->tls_database);
       rtspsrc->tls_database = g_value_dup_object (value);
       break;
+    case PROP_TLS_INTERACTION:
+      g_clear_object (&rtspsrc->tls_interaction);
+      rtspsrc->tls_interaction = g_value_dup_object (value);
+      break;
+    case PROP_DO_RETRANSMISSION:
+      rtspsrc->do_retransmission = g_value_get_boolean (value);
+      break;
+    case PROP_NTP_TIME_SOURCE:
+      rtspsrc->ntp_time_source = g_value_get_enum (value);
+      break;
+    case PROP_USER_AGENT:
+      g_free (rtspsrc->user_agent);
+      rtspsrc->user_agent = g_value_dup_string (value);
+      break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1150,6 +1291,18 @@ gst_rtspsrc_get_property (GObject * object, guint prop_id, GValue * value,
       break;
     case PROP_TLS_DATABASE:
       g_value_set_object (value, rtspsrc->tls_database);
+      break;
+    case PROP_TLS_INTERACTION:
+      g_value_set_object (value, rtspsrc->tls_interaction);
+      break;
+    case PROP_DO_RETRANSMISSION:
+      g_value_set_boolean (value, rtspsrc->do_retransmission);
+      break;
+    case PROP_NTP_TIME_SOURCE:
+      g_value_set_enum (value, rtspsrc->ntp_time_source);
+      break;
+    case PROP_USER_AGENT:
+      g_value_set_string (value, rtspsrc->user_agent);
       break;
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
@@ -1565,6 +1718,8 @@ gst_rtspsrc_stream_free (GstRTSPSrc * src, GstRTSPStream * stream)
     gst_object_unref (stream->rtcppad);
   if (stream->session)
     g_object_unref (stream->session);
+  if (stream->rtx_pt_map)
+    gst_structure_free (stream->rtx_pt_map);
   g_free (stream);
 }
 
@@ -1610,10 +1765,9 @@ gst_rtspsrc_cleanup (GstRTSPSrc * src)
     gst_sdp_message_free (src->sdp);
     src->sdp = NULL;
   }
-  if (src->start_segment) {
-    gst_event_unref (src->start_segment);
-    src->start_segment = NULL;
-  }
+
+  src->need_segment = FALSE;
+
   if (src->provided_clock) {
     gst_object_unref (src->provided_clock);
     src->provided_clock = NULL;
@@ -1727,6 +1881,7 @@ parse_keymgmt (const gchar * keymgmt, GstCaps * caps)
     return FALSE;
 
   msg = gst_mikey_message_new_from_data (data, size, NULL, NULL);
+  g_free (data);
   if (msg == NULL)
     return FALSE;
 
@@ -1875,6 +2030,8 @@ gst_rtspsrc_sdp_attributes_to_caps (GArray * attributes, GstCaps * caps)
         continue;
       if (!strcmp (key, "range"))
         continue;
+      if (!strcmp (key, "framesize"))
+        continue;
       if (g_str_equal (key, "key-mgmt")) {
         parse_keymgmt (attr->value, caps);
         continue;
@@ -1922,6 +2079,7 @@ rtsp_get_attribute_for_pt (const GstSDPMedia * media, const gchar * name,
  *  Mapping of caps to and from SDP fields:
  *
  *   a=rtpmap:<payload> <encoding_name>/<clock_rate>[/<encoding_params>]
+ *   a=framesize:<payload> <width>-<height>
  *   a=fmtp:<payload> <param>[=<value>];...
  */
 static GstCaps *
@@ -1930,6 +2088,7 @@ gst_rtspsrc_media_to_caps (gint pt, const GstSDPMedia * media)
   GstCaps *caps;
   const gchar *rtpmap;
   const gchar *fmtp;
+  const gchar *framesize;
   gchar *name = NULL;
   gint rate = -1;
   gchar *params = NULL;
@@ -2016,6 +2175,11 @@ gst_rtspsrc_media_to_caps (gint pt, const GstSDPMedia * media)
       for (i = 0; pairs[i]; i++) {
         gchar *valpos;
         const gchar *val, *key;
+        gint j;
+        const gchar *reserved_keys[] =
+            { "media", "payload", "clock-rate", "encoding-name",
+          "encoding-params"
+        };
 
         /* the key may not have a '=', the value can have other '='s */
         valpos = strstr (pairs[i], "=");
@@ -2034,6 +2198,19 @@ gst_rtspsrc_media_to_caps (gint pt, const GstSDPMedia * media)
         }
         /* strip the key of spaces, convert key to lowercase but not the value. */
         key = g_strstrip (pairs[i]);
+
+        /* skip keys from the fmtp, which we already use ourselves for the
+         * caps. Some software is adding random things like clock-rate into
+         * the fmtp, and we would otherwise here set a string-typed clock-rate
+         * in the caps... and thus fail to create valid RTP caps
+         */
+        for (j = 0; j < G_N_ELEMENTS (reserved_keys); j++) {
+          if (g_ascii_strcasecmp (reserved_keys[j], key) == 0) {
+            key = "";
+            break;
+          }
+        }
+
         if (strlen (key) > 1) {
           tmp = g_ascii_strdown (key, -1);
           gst_structure_set (s, tmp, G_TYPE_STRING, val, NULL);
@@ -2041,6 +2218,19 @@ gst_rtspsrc_media_to_caps (gint pt, const GstSDPMedia * media)
         }
       }
       g_strfreev (pairs);
+    }
+  }
+
+  /* parse framesize: field */
+  if ((framesize = gst_sdp_media_get_attribute_val (media, "framesize"))) {
+    gchar *p;
+
+    /* p is now of the format <payload> <width>-<height> */
+    p = (gchar *) framesize;
+
+    PARSE_INT (p, " ", payload);
+    if (payload != -1 && payload == pt) {
+      gst_structure_set (s, "a-framesize", G_TYPE_STRING, p, NULL);
     }
   }
   return caps;
@@ -2341,16 +2531,6 @@ out:
 }
 
 static gboolean
-gst_rtspsrc_do_seek (GstRTSPSrc * src, GstSegment * segment)
-{
-  src->state = GST_RTSP_STATE_SEEKING;
-  /* PLAY will add the range header now. */
-  src->need_range = TRUE;
-
-  return TRUE;
-}
-
-static gboolean
 gst_rtspsrc_perform_seek (GstRTSPSrc * src, GstEvent * event)
 {
   gdouble rate;
@@ -2439,7 +2619,10 @@ gst_rtspsrc_perform_seek (GstRTSPSrc * src, GstEvent * event)
   }
   src->skip = skip;
 
-  gst_rtspsrc_do_seek (src, &seeksegment);
+  src->state = GST_RTSP_STATE_SEEKING;
+
+  /* PLAY will add the range header now. */
+  src->need_range = TRUE;
 
   /* and continue playing */
   if (playing)
@@ -2647,9 +2830,8 @@ gst_rtspsrc_handle_src_query (GstPad * pad, GstObject * parent,
         seekable = seekable && src->seekable && src->segment.duration &&
             GST_CLOCK_TIME_IS_VALID (src->segment.duration);
 
-        /* FIXME ?? should we have 0 and segment.duration here; see demuxers */
-        gst_query_set_seeking (query, GST_FORMAT_TIME, seekable,
-            src->segment.start, src->segment.stop);
+        gst_query_set_seeking (query, GST_FORMAT_TIME, seekable, 0,
+            src->segment.duration);
         res = TRUE;
       }
       break;
@@ -3089,6 +3271,7 @@ request_rtcp_encoder (GstElement * rtpbin, guint session,
 
       g_value_unset (&rtcp_cipher);
       g_value_unset (&rtcp_auth);
+      gst_buffer_unref (buf);
     }
   }
   name = g_strdup_printf ("rtcp_sink_%d", session);
@@ -3099,6 +3282,125 @@ request_rtcp_encoder (GstElement * rtpbin, guint session,
   return gst_object_ref (stream->srtpenc);
 }
 
+static GstElement *
+request_aux_receiver (GstElement * rtpbin, guint sessid, GstRTSPSrc * src)
+{
+  GstElement *rtx, *bin;
+  GstPad *pad;
+  gchar *name;
+  GstRTSPStream *stream;
+
+  stream = find_stream (src, &sessid, (gpointer) find_stream_by_id);
+  if (!stream) {
+    GST_WARNING_OBJECT (src, "Stream %u not found", sessid);
+    return NULL;
+  }
+
+  GST_INFO_OBJECT (src, "creating retransmision receiver for session %u "
+      "with map %" GST_PTR_FORMAT, sessid, stream->rtx_pt_map);
+  bin = gst_bin_new (NULL);
+  rtx = gst_element_factory_make ("rtprtxreceive", NULL);
+  g_object_set (rtx, "payload-type-map", stream->rtx_pt_map, NULL);
+  gst_bin_add (GST_BIN (bin), rtx);
+
+  pad = gst_element_get_static_pad (rtx, "src");
+  name = g_strdup_printf ("src_%u", sessid);
+  gst_element_add_pad (bin, gst_ghost_pad_new (name, pad));
+  g_free (name);
+  gst_object_unref (pad);
+
+  pad = gst_element_get_static_pad (rtx, "sink");
+  name = g_strdup_printf ("sink_%u", sessid);
+  gst_element_add_pad (bin, gst_ghost_pad_new (name, pad));
+  g_free (name);
+  gst_object_unref (pad);
+
+  return bin;
+}
+
+static void
+add_retransmission (GstRTSPSrc * src, GstRTSPTransport * transport)
+{
+  GList *walk;
+  guint signal_id;
+  gboolean do_retransmission = FALSE;
+
+  if (transport->trans != GST_RTSP_TRANS_RTP)
+    return;
+  if (transport->profile != GST_RTSP_PROFILE_AVPF &&
+      transport->profile != GST_RTSP_PROFILE_SAVPF)
+    return;
+
+  signal_id = g_signal_lookup ("request-aux-receiver",
+      G_OBJECT_TYPE (src->manager));
+  /* there's already something connected */
+  if (g_signal_handler_find (src->manager, G_SIGNAL_MATCH_ID, signal_id, 0,
+          NULL, NULL, NULL) != 0) {
+    GST_DEBUG_OBJECT (src, "Not adding RTX AUX element as "
+        "\"request-aux-receiver\" signal is "
+        "already used by the application");
+    return;
+  }
+
+  /* build the retransmission payload type map */
+  for (walk = src->streams; walk; walk = g_list_next (walk)) {
+    GstRTSPStream *stream = (GstRTSPStream *) walk->data;
+    gboolean do_retransmission_stream = FALSE;
+    int i;
+
+    if (stream->rtx_pt_map)
+      gst_structure_free (stream->rtx_pt_map);
+    stream->rtx_pt_map = gst_structure_new_empty ("application/x-rtp-pt-map");
+
+    for (i = 0; i < stream->ptmap->len; i++) {
+      PtMapItem *item = &g_array_index (stream->ptmap, PtMapItem, i);
+      GstStructure *s = gst_caps_get_structure (item->caps, 0);
+      const gchar *encoding;
+
+      /* we only care about RTX streams */
+      if ((encoding = gst_structure_get_string (s, "encoding-name"))
+          && g_strcmp0 (encoding, "RTX") == 0) {
+        const gchar *stream_pt_s;
+        gint rtx_pt;
+
+        if (gst_structure_get_int (s, "payload", &rtx_pt)
+            && (stream_pt_s = gst_structure_get_string (s, "apt"))) {
+
+          if (rtx_pt != 0) {
+            gst_structure_set (stream->rtx_pt_map, stream_pt_s, G_TYPE_UINT,
+                rtx_pt, NULL);
+            do_retransmission_stream = TRUE;
+          }
+        }
+      }
+    }
+
+    if (do_retransmission_stream) {
+      GST_DEBUG_OBJECT (src, "built retransmission payload map for stream "
+          "id %i: %" GST_PTR_FORMAT, stream->id, stream->rtx_pt_map);
+      do_retransmission = TRUE;
+    } else {
+      GST_DEBUG_OBJECT (src, "no retransmission payload map for stream "
+          "id %i", stream->id);
+      gst_structure_free (stream->rtx_pt_map);
+      stream->rtx_pt_map = NULL;
+    }
+  }
+
+  if (do_retransmission) {
+    GST_DEBUG_OBJECT (src, "Enabling retransmissions");
+
+    g_object_set (src->manager, "do-retransmission", TRUE, NULL);
+
+    /* enable RFC4588 retransmission handling by setting rtprtxreceive
+     * as the "aux" element of rtpbin */
+    g_signal_connect (src->manager, "request-aux-receiver",
+        (GCallback) request_aux_receiver, src);
+  } else {
+    GST_DEBUG_OBJECT (src,
+        "Not enabling retransmissions as no stream had a retransmission payload map");
+  }
+}
 
 /* try to get and configure a manager */
 static gboolean
@@ -3148,9 +3450,15 @@ gst_rtspsrc_stream_configure_manager (GstRTSPSrc * src, GstRTSPStream * stream,
         g_object_set (src->manager, "ntp-sync", src->ntp_sync, NULL);
       }
 
-      if (g_object_class_find_property (klass, "use-pipeline-clock")) {
-        g_object_set (src->manager, "use-pipeline-clock",
-            src->use_pipeline_clock, NULL);
+      if (src->use_pipeline_clock) {
+        if (g_object_class_find_property (klass, "use-pipeline-clock")) {
+          g_object_set (src->manager, "use-pipeline-clock", TRUE, NULL);
+        }
+      } else {
+        if (g_object_class_find_property (klass, "ntp-time-source")) {
+          g_object_set (src->manager, "ntp-time-source", src->ntp_time_source,
+              NULL);
+        }
       }
 
       if (src->sdes && g_object_class_find_property (klass, "sdes")) {
@@ -3171,7 +3479,7 @@ gst_rtspsrc_stream_configure_manager (GstRTSPSrc * src, GstRTSPStream * stream,
        * so slaving in jitterbuffer does not make much sense
        * (and might mess things up due to bursts) */
       if (GST_CLOCK_TIME_IS_VALID (src->segment.duration) &&
-          src->segment.duration && !stream->container) {
+          src->segment.duration && stream->container) {
         src->use_buffering = TRUE;
       } else {
         src->use_buffering = FALSE;
@@ -3194,6 +3502,9 @@ gst_rtspsrc_stream_configure_manager (GstRTSPSrc * src, GstRTSPStream * stream,
 
       g_signal_emit (src, gst_rtspsrc_signals[SIGNAL_NEW_MANAGER], 0,
           src->manager);
+
+      if (src->do_retransmission)
+        add_retransmission (src, transport);
     }
     g_signal_connect (src->manager, "request-rtp-decoder",
         (GCallback) request_rtp_decoder, stream);
@@ -3219,6 +3530,8 @@ gst_rtspsrc_stream_configure_manager (GstRTSPSrc * src, GstRTSPStream * stream,
       g_signal_emit_by_name (src->manager, "get-internal-session", stream->id,
           &rtpsession);
       if (rtpsession) {
+        GstRTPProfile rtp_profile;
+
         GST_INFO_OBJECT (src, "configure bandwidth in session %p", rtpsession);
 
         stream->session = rtpsession;
@@ -3239,6 +3552,24 @@ gst_rtspsrc_stream_configure_manager (GstRTSPSrc * src, GstRTSPStream * stream,
           g_object_set (rtpsession, "rtcp-rs-bandwidth", stream->rs_bandwidth,
               NULL);
         }
+
+        switch (stream->profile) {
+          case GST_RTSP_PROFILE_AVPF:
+            rtp_profile = GST_RTP_PROFILE_AVPF;
+            break;
+          case GST_RTSP_PROFILE_SAVP:
+            rtp_profile = GST_RTP_PROFILE_SAVP;
+            break;
+          case GST_RTSP_PROFILE_SAVPF:
+            rtp_profile = GST_RTP_PROFILE_SAVPF;
+            break;
+          case GST_RTSP_PROFILE_AVP:
+          default:
+            rtp_profile = GST_RTP_PROFILE_AVP;
+            break;
+        }
+
+        g_object_set (rtpsession, "rtp-profile", rtp_profile, NULL);
 
         g_object_set (rtpsession, "probation", src->probation, NULL);
 
@@ -4149,6 +4480,10 @@ gst_rtsp_conninfo_connect (GstRTSPSrc * src, GstRTSPConnInfo * info,
       if (src->tls_database)
         gst_rtsp_connection_set_tls_database (info->connection,
             src->tls_database);
+
+      if (src->tls_interaction)
+        gst_rtsp_connection_set_tls_interaction (info->connection,
+            src->tls_interaction);
     }
 
     if (info->url->transports & GST_RTSP_LOWER_TRANS_HTTP)
@@ -4255,6 +4590,23 @@ gst_rtspsrc_connection_flush (GstRTSPSrc * src, gboolean flush)
   GST_RTSP_STATE_UNLOCK (src);
 }
 
+static GstRTSPResult
+gst_rtspsrc_init_request (GstRTSPSrc * src, GstRTSPMessage * msg,
+    GstRTSPMethod method, const gchar * uri)
+{
+  GstRTSPResult res;
+
+  res = gst_rtsp_message_init_request (msg, method, uri);
+  if (res < 0)
+    return res;
+
+  /* set user-agent */
+  if (src->user_agent)
+    gst_rtsp_message_add_header (msg, GST_RTSP_HDR_USER_AGENT, src->user_agent);
+
+  return res;
+}
+
 /* FIXME, handle server request, reply with OK, for now */
 static GstRTSPResult
 gst_rtspsrc_handle_request (GstRTSPSrc * src, GstRTSPConnection * conn,
@@ -4331,7 +4683,7 @@ gst_rtspsrc_send_keep_alive (GstRTSPSrc * src)
   if (control == NULL)
     goto no_control;
 
-  res = gst_rtsp_message_init_request (&request, method, control);
+  res = gst_rtspsrc_init_request (src, &request, method, control);
   if (res < 0)
     goto send_error;
 
@@ -4378,7 +4730,6 @@ gst_rtspsrc_handle_data (GstRTSPSrc * src, GstRTSPMessage * message)
   guint size;
   GstBuffer *buf;
   gboolean is_rtcp;
-  GstEvent *event;
 
   channel = message->type_data.data.channel;
 
@@ -4443,6 +4794,7 @@ gst_rtspsrc_handle_data (GstRTSPSrc * src, GstRTSPMessage * message)
 
     for (streams = src->streams; streams; streams = g_list_next (streams)) {
       GstRTSPStream *ostream = (GstRTSPStream *) streams->data;
+      GstCaps *caps;
 
       stream_id =
           g_strdup_printf ("%s/%d", g_checksum_get_string (cs), ostream->id);
@@ -4451,15 +4803,45 @@ gst_rtspsrc_handle_data (GstRTSPSrc * src, GstRTSPMessage * message)
 
       g_free (stream_id);
       gst_rtspsrc_stream_push_event (src, ostream, event);
+
+      if ((caps = stream_get_caps_for_pt (ostream, ostream->default_pt))) {
+        /* only streams that have a connection to the outside world */
+        if (ostream->setup) {
+          if (ostream->udpsrc[0]) {
+            gst_element_send_event (ostream->udpsrc[0],
+                gst_event_new_caps (caps));
+          } else if (ostream->channelpad[0]) {
+            if (GST_PAD_IS_SRC (ostream->channelpad[0]))
+              gst_pad_push_event (ostream->channelpad[0],
+                  gst_event_new_caps (caps));
+            else
+              gst_pad_send_event (ostream->channelpad[0],
+                  gst_event_new_caps (caps));
+          }
+
+          caps = gst_caps_new_empty_simple ("application/x-rtcp");
+
+          if (ostream->udpsrc[1]) {
+            gst_element_send_event (ostream->udpsrc[1],
+                gst_event_new_caps (caps));
+          } else if (ostream->channelpad[1]) {
+            if (GST_PAD_IS_SRC (ostream->channelpad[1]))
+              gst_pad_push_event (ostream->channelpad[1],
+                  gst_event_new_caps (caps));
+            else
+              gst_pad_send_event (ostream->channelpad[1],
+                  gst_event_new_caps (caps));
+          }
+
+          gst_caps_unref (caps);
+        }
+      }
     }
     g_checksum_free (cs);
 
     gst_rtspsrc_activate_streams (src);
     src->need_activate = FALSE;
-  }
-  if ((event = src->start_segment) != NULL) {
-    src->start_segment = NULL;
-    gst_rtspsrc_push_event (src, event);
+    src->need_segment = TRUE;
   }
 
   if (src->base_time == -1) {
@@ -4484,6 +4866,15 @@ gst_rtspsrc_handle_data (GstRTSPSrc * src, GstRTSPMessage * message)
           GST_TIME_FORMAT, GST_TIME_ARGS (now), GST_TIME_ARGS (base_time));
     }
     GST_OBJECT_UNLOCK (src);
+  }
+
+  /* If needed send a new segment, don't forget we are live and buffer are
+   * timestamped with running time */
+  if (src->need_segment) {
+    GstSegment segment;
+    src->need_segment = FALSE;
+    gst_segment_init (&segment, GST_FORMAT_TIME);
+    gst_rtspsrc_push_event (src, gst_event_new_segment (&segment));
   }
 
   if (stream->discont && !is_rtcp) {
@@ -4984,7 +5375,7 @@ gst_rtspsrc_loop_send_cmd (GstRTSPSrc * src, gint cmd, gint mask)
   /* start new request */
   gst_rtspsrc_loop_start_cmd (src, cmd);
 
-  GST_DEBUG_OBJECT (src, "sending cmd %d", cmd);
+  GST_DEBUG_OBJECT (src, "sending cmd %s", cmd_to_string (cmd));
 
   GST_OBJECT_LOCK (src);
   old = src->pending_cmd;
@@ -4996,18 +5387,20 @@ gst_rtspsrc_loop_send_cmd (GstRTSPSrc * src, gint cmd, gint mask)
     src->pending_cmd = CMD_WAIT;
     GST_OBJECT_UNLOCK (src);
     /* cancel previous request */
-    GST_DEBUG_OBJECT (src, "cancel previous request %d", old);
+    GST_DEBUG_OBJECT (src, "cancel previous request %s", cmd_to_string (old));
     gst_rtspsrc_loop_cancel_cmd (src, old);
     GST_OBJECT_LOCK (src);
   }
   src->pending_cmd = cmd;
   /* interrupt if allowed */
   if (src->busy_cmd & mask) {
-    GST_DEBUG_OBJECT (src, "connection flush busy %d", src->busy_cmd);
+    GST_DEBUG_OBJECT (src, "connection flush busy %s",
+        cmd_to_string (src->busy_cmd));
     gst_rtspsrc_connection_flush (src, TRUE);
     flushed = TRUE;
   } else {
-    GST_DEBUG_OBJECT (src, "not interrupting busy cmd %d", src->busy_cmd);
+    GST_DEBUG_OBJECT (src, "not interrupting busy cmd %s",
+        cmd_to_string (src->busy_cmd));
   }
   if (src->task)
     gst_task_start (src->task);
@@ -5582,6 +5975,10 @@ error_response:
         GST_ELEMENT_ERROR (src, RESOURCE, NOT_FOUND, (NULL), ("%s",
                 response->type_data.response.reason));
         break;
+      case GST_RTSP_STS_UNAUTHORIZED:
+        GST_ELEMENT_ERROR (src, RESOURCE, NOT_AUTHORIZED, (NULL), ("%s",
+                response->type_data.response.reason));
+        break;
       case GST_RTSP_STS_MOVED_PERMANENTLY:
       case GST_RTSP_STS_MOVE_TEMPORARILY:
       {
@@ -5717,7 +6114,7 @@ no_setup:
 
 /* masks to be kept in sync with the hardcoded protocol order of preference
  * in code below */
-static guint protocol_masks[] = {
+static const guint protocol_masks[] = {
   GST_RTSP_LOWER_TRANS_UDP,
   GST_RTSP_LOWER_TRANS_UDP_MCAST,
   GST_RTSP_LOWER_TRANS_TCP,
@@ -5950,6 +6347,8 @@ default_srtcp_params (void)
       "srtp-key", GST_TYPE_BUFFER, buf,
       "srtcp-cipher", G_TYPE_STRING, "aes-128-icm",
       "srtcp-auth", G_TYPE_STRING, "hmac-sha1-80", NULL);
+
+  gst_buffer_unref (buf);
 
   return caps;
 }
@@ -6221,7 +6620,7 @@ gst_rtspsrc_setup_streams (GstRTSPSrc * src, gboolean async)
 
     /* create SETUP request */
     res =
-        gst_rtsp_message_init_request (&request, GST_RTSP_SETUP,
+        gst_rtspsrc_init_request (src, &request, GST_RTSP_SETUP,
         stream->conninfo.location);
     if (res < 0) {
       g_free (transports);
@@ -6250,7 +6649,8 @@ gst_rtspsrc_setup_streams (GstRTSPSrc * src, gboolean async)
               stream->id));
 
     /* handle the code ourselves */
-    if ((res = gst_rtspsrc_send (src, conn, &request, &response, &code) < 0))
+    res = gst_rtspsrc_send (src, conn, &request, &response, &code);
+    if (res < 0)
       goto send_error;
 
     switch (code) {
@@ -6344,7 +6744,7 @@ gst_rtspsrc_setup_streams (GstRTSPSrc * src, gboolean async)
           break;
       }
 
-      if (!stream->container || (!src->interleaved && !retry)) {
+      if (!src->interleaved || !retry) {
         /* now configure the stream with the selected transport */
         if (!gst_rtspsrc_stream_configure_transport (stream, &transport)) {
           GST_DEBUG_OBJECT (src,
@@ -6757,7 +7157,7 @@ restart:
   /* create OPTIONS */
   GST_DEBUG_OBJECT (src, "create options...");
   res =
-      gst_rtsp_message_init_request (&request, GST_RTSP_OPTIONS,
+      gst_rtspsrc_init_request (src, &request, GST_RTSP_OPTIONS,
       src->conninfo.url_str);
   if (res < 0)
     goto create_request_failed;
@@ -6780,7 +7180,7 @@ restart:
   /* create DESCRIBE */
   GST_DEBUG_OBJECT (src, "create describe...");
   res =
-      gst_rtsp_message_init_request (&request, GST_RTSP_DESCRIBE,
+      gst_rtspsrc_init_request (src, &request, GST_RTSP_DESCRIBE,
       src->conninfo.url_str);
   if (res < 0)
     goto create_request_failed;
@@ -6823,7 +7223,7 @@ restart:
   /* could not be set but since the request returned OK, we assume it
    * was SDP, else check it. */
   if (respcont) {
-    if (!g_ascii_strcasecmp (respcont, "application/sdp") == 0)
+    if (g_ascii_strcasecmp (respcont, "application/sdp") != 0)
       goto wrong_content_type;
   }
 
@@ -6996,7 +7396,7 @@ gst_rtspsrc_close (GstRTSPSrc * src, gboolean async, gboolean only_close)
 
     /* do TEARDOWN */
     res =
-        gst_rtsp_message_init_request (&request, GST_RTSP_TEARDOWN, setup_url);
+        gst_rtspsrc_init_request (src, &request, GST_RTSP_TEARDOWN, setup_url);
     if (res < 0)
       goto create_request_failed;
 
@@ -7287,8 +7687,6 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
   if (src->manager)
     g_signal_emit_by_name (src->manager, "reset-sync", NULL);
 
-  gst_rtspsrc_set_state (src, GST_STATE_PLAYING);
-
   /* construct a control url */
   control = get_aggregate_control (src);
 
@@ -7312,7 +7710,7 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
     }
 
     /* do play */
-    res = gst_rtsp_message_init_request (&request, GST_RTSP_PLAY, setup_url);
+    res = gst_rtspsrc_init_request (src, &request, GST_RTSP_PLAY, setup_url);
     if (res < 0)
       goto create_request_failed;
 
@@ -7322,9 +7720,7 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
       gst_rtsp_message_take_header (&request, GST_RTSP_HDR_RANGE, hval);
 
       /* store the newsegment event so it can be sent from the streaming thread. */
-      if (src->start_segment)
-        gst_event_unref (src->start_segment);
-      src->start_segment = gst_event_new_segment (&src->segment);
+      src->need_segment = TRUE;
     }
 
     if (segment->rate != 1.0) {
@@ -7409,6 +7805,11 @@ gst_rtspsrc_play (GstRTSPSrc * src, GstSegment * segment, gboolean async)
   /* configure the caps of the streams after we parsed all headers. Only reset
    * the manager object when we set a new Range header (we did a seek) */
   gst_rtspsrc_configure_caps (src, segment, src->need_range);
+
+  /* set to PLAYING after we have configured the caps, otherwise we
+   * might end up calling request_key (with SRTP) while caps are still
+   * being configured. */
+  gst_rtspsrc_set_state (src, GST_STATE_PLAYING);
 
   /* set again when needed */
   src->need_range = FALSE;
@@ -7523,7 +7924,7 @@ gst_rtspsrc_pause (GstRTSPSrc * src, gboolean async)
           ("Sending PAUSE request"));
 
     if ((res =
-            gst_rtsp_message_init_request (&request, GST_RTSP_PAUSE,
+            gst_rtspsrc_init_request (src, &request, GST_RTSP_PAUSE,
                 setup_url)) < 0)
       goto create_request_failed;
 
@@ -7684,7 +8085,7 @@ gst_rtspsrc_thread (GstRTSPSrc * src)
     src->pending_cmd = CMD_LOOP;
   else
     src->pending_cmd = CMD_WAIT;
-  GST_DEBUG_OBJECT (src, "got command %d", cmd);
+  GST_DEBUG_OBJECT (src, "got command %s", cmd_to_string (cmd));
 
   /* we got the message command, so ensure communication is possible again */
   gst_rtspsrc_connection_flush (src, FALSE);
@@ -7924,6 +8325,7 @@ gst_rtspsrc_uri_set_uri (GstURIHandler * handler, const gchar * uri,
 {
   GstRTSPSrc *src;
   GstRTSPResult res;
+  GstSDPResult sres;
   GstRTSPUrl *newurl = NULL;
   GstSDPMessage *sdp = NULL;
 
@@ -7934,11 +8336,13 @@ gst_rtspsrc_uri_set_uri (GstURIHandler * handler, const gchar * uri,
     goto was_ok;
 
   if (g_str_has_prefix (uri, "rtsp-sdp://")) {
-    if ((res = gst_sdp_message_new (&sdp) < 0))
+    sres = gst_sdp_message_new (&sdp);
+    if (sres < 0)
       goto sdp_failed;
 
     GST_DEBUG_OBJECT (src, "parsing SDP message");
-    if ((res = gst_sdp_message_parse_uri (uri, sdp) < 0))
+    sres = gst_sdp_message_parse_uri (uri, sdp);
+    if (sres < 0)
       goto invalid_sdp;
   } else {
     /* try to parse */
@@ -7979,14 +8383,14 @@ was_ok:
   }
 sdp_failed:
   {
-    GST_ERROR_OBJECT (src, "Could not create new SDP (%d)", res);
+    GST_ERROR_OBJECT (src, "Could not create new SDP (%d)", sres);
     g_set_error_literal (error, GST_URI_ERROR, GST_URI_ERROR_BAD_URI,
         "Could not create SDP");
     return FALSE;
   }
 invalid_sdp:
   {
-    GST_ERROR_OBJECT (src, "Not a valid SDP (%d) '%s'", res,
+    GST_ERROR_OBJECT (src, "Not a valid SDP (%d) '%s'", sres,
         GST_STR_NULL (uri));
     gst_sdp_message_free (sdp);
     g_set_error_literal (error, GST_URI_ERROR, GST_URI_ERROR_BAD_URI,

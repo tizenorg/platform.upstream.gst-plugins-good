@@ -25,6 +25,7 @@
 #include <stdlib.h>
 
 #include "gstrtpgstdepay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (rtpgstdepay_debug);
 #define GST_CAT_DEFAULT (rtpgstdepay_debug)
@@ -59,7 +60,7 @@ static void gst_rtp_gst_depay_reset (GstRtpGSTDepay * rtpgstdepay, gboolean
 static gboolean gst_rtp_gst_depay_setcaps (GstRTPBaseDepayload * depayload,
     GstCaps * caps);
 static GstBuffer *gst_rtp_gst_depay_process (GstRTPBaseDepayload * depayload,
-    GstBuffer * buf);
+    GstRTPBuffer * rtp);
 
 static void
 gst_rtp_gst_depay_class_init (GstRtpGSTDepayClass * klass)
@@ -91,7 +92,7 @@ gst_rtp_gst_depay_class_init (GstRtpGSTDepayClass * klass)
 
   gstrtpbasedepayload_class->handle_event = gst_rtp_gst_depay_handle_event;
   gstrtpbasedepayload_class->set_caps = gst_rtp_gst_depay_setcaps;
-  gstrtpbasedepayload_class->process = gst_rtp_gst_depay_process;
+  gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_gst_depay_process;
 }
 
 static void
@@ -232,6 +233,9 @@ read_caps (GstRtpGSTDepay * rtpgstdepay, GstBuffer * buf, guint * skip)
   if (!read_length (rtpgstdepay, map.data, map.size, &length, &offset))
     goto too_small;
 
+  if (length == 0 || map.data[offset + length - 1] != '\0')
+    goto invalid_buffer;
+
   GST_DEBUG_OBJECT (rtpgstdepay, "parsing caps %s", &map.data[offset]);
 
   /* parse and store in cache */
@@ -246,6 +250,13 @@ too_small:
   {
     GST_ELEMENT_WARNING (rtpgstdepay, STREAM, DECODE,
         ("Buffer too small."), (NULL));
+    gst_buffer_unmap (buf, &map);
+    return NULL;
+  }
+invalid_buffer:
+  {
+    GST_ELEMENT_WARNING (rtpgstdepay, STREAM, DECODE,
+        ("caps string not 0-terminated."), (NULL));
     gst_buffer_unmap (buf, &map);
     return NULL;
   }
@@ -268,6 +279,14 @@ read_event (GstRtpGSTDepay * rtpgstdepay, guint type,
 
   if (!read_length (rtpgstdepay, map.data, map.size, &length, &offset))
     goto too_small;
+
+  if (length == 0)
+    goto invalid_buffer;
+  if (map.data[offset + length - 1] != '\0')
+    goto invalid_buffer;
+  /* backward compat, old payloader did not put 0-byte at the end */
+  if (map.data[offset + length - 1] != ';')
+    goto invalid_buffer;
 
   GST_DEBUG_OBJECT (rtpgstdepay, "parsing event %s", &map.data[offset]);
 
@@ -304,6 +323,13 @@ too_small:
   {
     GST_ELEMENT_WARNING (rtpgstdepay, STREAM, DECODE,
         ("Buffer too small."), (NULL));
+    gst_buffer_unmap (buf, &map);
+    return NULL;
+  }
+invalid_buffer:
+  {
+    GST_ELEMENT_WARNING (rtpgstdepay, STREAM, DECODE,
+        ("event string not 0-terminated."), (NULL));
     gst_buffer_unmap (buf, &map);
     return NULL;
   }
@@ -372,30 +398,27 @@ store_event (GstRtpGSTDepay * rtpgstdepay, GstEvent * event)
 }
 
 static GstBuffer *
-gst_rtp_gst_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
+gst_rtp_gst_depay_process (GstRTPBaseDepayload * depayload, GstRTPBuffer * rtp)
 {
   GstRtpGSTDepay *rtpgstdepay;
   GstBuffer *subbuf, *outbuf = NULL;
   gint payload_len;
   guint8 *payload;
   guint CV, frag_offset, avail, offset;
-  GstRTPBuffer rtp = { NULL };
 
   rtpgstdepay = GST_RTP_GST_DEPAY (depayload);
 
-  gst_rtp_buffer_map (buf, GST_MAP_READ, &rtp);
-
-  payload_len = gst_rtp_buffer_get_payload_len (&rtp);
+  payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
   if (payload_len <= 8)
     goto empty_packet;
 
-  if (GST_BUFFER_IS_DISCONT (buf)) {
+  if (GST_BUFFER_IS_DISCONT (rtp->buffer)) {
     GST_WARNING_OBJECT (rtpgstdepay, "DISCONT, clear adapter");
     gst_adapter_clear (rtpgstdepay->adapter);
   }
 
-  payload = gst_rtp_buffer_get_payload (&rtp);
+  payload = gst_rtp_buffer_get_payload (rtp);
 
   /* strip off header
    *
@@ -415,11 +438,11 @@ gst_rtp_gst_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
     goto wrong_frag;
 
   /* subbuffer skipping the 8 header bytes */
-  subbuf = gst_rtp_buffer_get_payload_subbuffer (&rtp, 8, -1);
+  subbuf = gst_rtp_buffer_get_payload_subbuffer (rtp, 8, -1);
   gst_adapter_push (rtpgstdepay->adapter, subbuf);
 
   offset = 0;
-  if (gst_rtp_buffer_get_marker (&rtp)) {
+  if (gst_rtp_buffer_get_marker (rtp)) {
     guint avail;
     GstCaps *outcaps;
 
@@ -500,7 +523,10 @@ gst_rtp_gst_depay_process (GstRTPBaseDepayload * depayload, GstBuffer * buf)
       outbuf = NULL;
     }
   }
-  gst_rtp_buffer_unmap (&rtp);
+
+  if (outbuf) {
+    gst_rtp_drop_meta (GST_ELEMENT_CAST (rtpgstdepay), outbuf, 0);
+  }
 
   return outbuf;
 
@@ -509,13 +535,11 @@ empty_packet:
   {
     GST_ELEMENT_WARNING (rtpgstdepay, STREAM, DECODE,
         ("Empty Payload."), (NULL));
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 wrong_frag:
   {
     gst_adapter_clear (rtpgstdepay->adapter);
-    gst_rtp_buffer_unmap (&rtp);
     GST_LOG_OBJECT (rtpgstdepay, "wrong fragment, skipping");
     return NULL;
   }
@@ -523,14 +547,12 @@ no_caps:
   {
     GST_WARNING_OBJECT (rtpgstdepay, "failed to parse caps");
     gst_buffer_unref (outbuf);
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 no_event:
   {
     GST_WARNING_OBJECT (rtpgstdepay, "failed to parse event");
     gst_buffer_unref (outbuf);
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 missing_caps:
@@ -538,7 +560,6 @@ missing_caps:
     GST_ELEMENT_WARNING (rtpgstdepay, STREAM, DECODE,
         ("Missing caps %u.", CV), (NULL));
     gst_buffer_unref (outbuf);
-    gst_rtp_buffer_unmap (&rtp);
     return NULL;
   }
 }

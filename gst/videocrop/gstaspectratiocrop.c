@@ -50,8 +50,8 @@ GST_DEBUG_CATEGORY_STATIC (aspect_ratio_crop_debug);
 
 enum
 {
-  ARG_0,
-  ARG_ASPECT_RATIO_CROP,
+  PROP_0,
+  PROP_ASPECT_RATIO_CROP,
 };
 
 /* we support the same caps as videocrop (sync changes) */
@@ -152,12 +152,7 @@ static gboolean
 gst_aspect_ratio_crop_sink_event (GstPad * pad, GstObject * parent,
     GstEvent * evt)
 {
-  gboolean ret;
   GstAspectRatioCrop *aspect_ratio_crop = GST_ASPECT_RATIO_CROP (parent);
-
-  ret =
-      aspect_ratio_crop->sinkpad_old_eventfunc (pad, parent,
-      gst_event_ref (evt));
 
   switch (GST_EVENT_TYPE (evt)) {
     case GST_EVENT_CAPS:
@@ -165,15 +160,14 @@ gst_aspect_ratio_crop_sink_event (GstPad * pad, GstObject * parent,
       GstCaps *caps;
 
       gst_event_parse_caps (evt, &caps);
-      ret = gst_aspect_ratio_crop_set_caps (aspect_ratio_crop, caps);
+      gst_aspect_ratio_crop_set_caps (aspect_ratio_crop, caps);
       break;
     }
     default:
       break;
   }
-  gst_event_unref (evt);
 
-  return ret;
+  return gst_pad_event_default (pad, parent, evt);
 }
 
 static void
@@ -189,7 +183,7 @@ gst_aspect_ratio_crop_class_init (GstAspectRatioCropClass * klass)
   gobject_class->get_property = gst_aspect_ratio_crop_get_property;
   gobject_class->finalize = gst_aspect_ratio_crop_finalize;
 
-  g_object_class_install_property (gobject_class, ARG_ASPECT_RATIO_CROP,
+  g_object_class_install_property (gobject_class, PROP_ASPECT_RATIO_CROP,
       gst_param_spec_fraction ("aspect-ratio", "aspect-ratio",
           "Target aspect-ratio of video", 0, 1, G_MAXINT, 1, 0, 1,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
@@ -253,8 +247,6 @@ gst_aspect_ratio_crop_init (GstAspectRatioCrop * aspect_ratio_crop)
       aspect_ratio_crop->sink);
   gst_object_unref (link_pad);
 
-  aspect_ratio_crop->sinkpad_old_eventfunc =
-      GST_PAD_EVENTFUNC (aspect_ratio_crop->sink);
   gst_pad_set_event_function (aspect_ratio_crop->sink,
       GST_DEBUG_FUNCPTR (gst_aspect_ratio_crop_sink_event));
 }
@@ -456,7 +448,7 @@ gst_aspect_ratio_crop_set_property (GObject * object, guint prop_id,
 
   GST_OBJECT_LOCK (aspect_ratio_crop);
   switch (prop_id) {
-    case ARG_ASPECT_RATIO_CROP:
+    case PROP_ASPECT_RATIO_CROP:
       if (GST_VALUE_HOLDS_FRACTION (value)) {
         aspect_ratio_crop->ar_num = gst_value_get_fraction_numerator (value);
         aspect_ratio_crop->ar_denom =
@@ -487,7 +479,7 @@ gst_aspect_ratio_crop_get_property (GObject * object, guint prop_id,
 
   GST_OBJECT_LOCK (aspect_ratio_crop);
   switch (prop_id) {
-    case ARG_ASPECT_RATIO_CROP:
+    case PROP_ASPECT_RATIO_CROP:
       gst_value_set_fraction (value, aspect_ratio_crop->ar_num,
           aspect_ratio_crop->ar_denom);
       break;

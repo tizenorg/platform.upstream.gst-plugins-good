@@ -358,9 +358,6 @@ make_proplist_item (GQuark field_id, const GValue * value, gpointer user_data)
     case G_TYPE_STRING:
       pa_proplist_sets (p, prop_id, g_value_get_string (value));
       break;
-    case G_TYPE_INT:
-      pa_proplist_setf (p, prop_id, "%d", g_value_get_int (value));
-      break;
     default:
       GST_WARNING ("unmapped property type %s", G_VALUE_TYPE_NAME (value));
       break;
@@ -377,6 +374,28 @@ gst_pulse_make_proplist (const GstStructure * properties)
   /* iterate the structure and fill the proplist */
   gst_structure_foreach (properties, make_proplist_item, proplist);
   return proplist;
+}
+
+GstStructure *
+gst_pulse_make_structure (pa_proplist * properties)
+{
+  GstStructure *str;
+  void *state = NULL;
+
+  str = gst_structure_new_empty ("pulse-proplist");
+
+  while (TRUE) {
+    const char *key, *val;
+
+    key = pa_proplist_iterate (properties, &state);
+    if (key == NULL)
+      break;
+
+    val = pa_proplist_gets (properties, key);
+
+    gst_structure_set (str, key, G_TYPE_STRING, val, NULL);
+  }
+  return str;
 }
 
 static gboolean

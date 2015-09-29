@@ -59,9 +59,9 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 #define DEFAULT_VOLUME          1.0
 #define DEFAULT_MUTE            FALSE
 #define MAX_VOLUME              10.0
-#ifdef __TIZEN__
-#define DEFAULT_AUDIO_LATENCY   "mid"
-#endif /* __TIZEN__ */
+
+/* See the pulsesink code for notes on how we interact with the PA mainloop
+ * thread. */
 
 enum
 {
@@ -75,9 +75,6 @@ enum
   PROP_SOURCE_OUTPUT_INDEX,
   PROP_VOLUME,
   PROP_MUTE,
-#ifdef __TIZEN__
-  PROP_AUDIO_LATENCY,
-#endif /* __TIZEN__ */
   PROP_LAST
 };
 
@@ -248,15 +245,6 @@ gst_pulsesrc_class_init (GstPulseSrcClass * klass)
       PROP_MUTE, g_param_spec_boolean ("mute", "Mute",
           "Mute state of this stream",
           DEFAULT_MUTE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-#ifdef __TIZEN__
-  g_object_class_install_property (gobject_class,
-      PROP_AUDIO_LATENCY,
-      g_param_spec_string ("latency", "Audio Backend Latency",
-          "Audio Backend Latency (\"low\": Low Latency, \"mid\": Mid Latency, \"high\": High Latency)",
-          DEFAULT_AUDIO_LATENCY,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-#endif /* __TIZEN__ */
 }
 
 static void
@@ -291,11 +279,6 @@ gst_pulsesrc_init (GstPulseSrc * pulsesrc)
 
   pulsesrc->properties = NULL;
   pulsesrc->proplist = NULL;
-#ifdef __TIZEN__
-  pulsesrc->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
-  pulsesrc->proplist = pa_proplist_new();
-  pa_proplist_sets(pulsesrc->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesrc->latency);
-#endif /* __TIZEN__ */
 
   /* this should be the default but it isn't yet */
   gst_audio_base_src_set_slave_method (GST_AUDIO_BASE_SRC (pulsesrc),
@@ -359,10 +342,6 @@ gst_pulsesrc_finalize (GObject * object)
     gst_structure_free (pulsesrc->properties);
   if (pulsesrc->proplist)
     pa_proplist_free (pulsesrc->proplist);
-
-#ifdef __TIZEN__
-  g_free (pulsesrc->latency);
-#endif /* __TIZEN__ */
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -834,21 +813,6 @@ gst_pulsesrc_set_property (GObject * object,
     case PROP_MUTE:
       gst_pulsesrc_set_stream_mute (pulsesrc, g_value_get_boolean (value));
       break;
-#ifdef __TIZEN__
-    case PROP_AUDIO_LATENCY:
-      g_free (pulsesrc->latency);
-      pulsesrc->latency = g_value_dup_string (value);
-      /* setting NULL restores the default latency */
-      if (pulsesrc->latency == NULL) {
-        pulsesrc->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
-      }
-      if (!pulsesrc->proplist) {
-        pulsesrc->proplist = pa_proplist_new();
-      }
-      pa_proplist_sets(pulsesrc->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesrc->latency);
-      GST_DEBUG_OBJECT(pulsesrc, "latency(%s)", pulsesrc->latency);
-      break;
-#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -904,11 +868,6 @@ gst_pulsesrc_get_property (GObject * object,
       g_value_set_boolean (value, mute);
       break;
     }
-#ifdef __TIZEN__
-    case PROP_AUDIO_LATENCY:
-      g_value_set_string (value, pulsesrc->latency);
-      break;
-#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -1542,7 +1501,20 @@ gst_pulsesrc_prepare (GstAudioSrc * asrc, GstAudioRingBufferSpec * spec)
 
   pa_operation_unref (o);
 
-  wanted.maxlength = -1;
+  /* There's a bit of a disconnect here between the audio ringbuffer and what
+   * PulseAudio provides. The audio ringbuffer provide a total of buffer_time
+   * worth of buffering, divided into segments of latency_time size. We're
+   * asking PulseAudio to provide a total latency of latency_time, which, with
+   * PA_STREAM_ADJUST_LATENCY, effectively sets itself up as a ringbuffer with
+   * one segment being the hardware buffer, and the other the software buffer.
+   * This segment size is returned as the fragsize.
+   *
+   * Since the two concepts don't map very well, what we do is keep segsize as
+   * it is (unless fragsize is even larger, in which case we use that). We'll
+   * get data from PulseAudio in smaller chunks than we want to pass on as an
+   * element, and we coalesce those chunks in the ringbuffer memory and pass it
+   * on in the expected chunk size. */
+  wanted.maxlength = spec->segsize * spec->segtotal;
   wanted.tlength = -1;
   wanted.prebuf = 0;
   wanted.minreq = -1;
@@ -1615,11 +1587,14 @@ gst_pulsesrc_prepare (GstAudioSrc * asrc, GstAudioRingBufferSpec * spec)
   GST_INFO_OBJECT (pulsesrc, "fragsize:  %d (wanted %d)",
       actual->fragsize, wanted.fragsize);
 
-  if (actual->fragsize >= wanted.fragsize) {
+  if (actual->fragsize >= spec->segsize) {
     spec->segsize = actual->fragsize;
   } else {
-    spec->segsize = actual->fragsize * (wanted.fragsize / actual->fragsize);
+    /* fragsize is smaller than what we wanted, so let the read function
+     * coalesce the smaller chunks as they come in */
   }
+
+  /* Fix up the total ringbuffer size based on what we actually got */
   spec->segtotal = actual->maxlength / spec->segsize;
 
   if (!pulsesrc->paused) {

@@ -258,6 +258,7 @@ gst_flac_parse_init (GstFlacParse * flacparse)
 {
   flacparse->check_frame_checksums = DEFAULT_CHECK_FRAME_CHECKSUMS;
   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (flacparse));
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (flacparse));
 }
 
 static void
@@ -304,6 +305,10 @@ gst_flac_parse_finalize (GObject * object)
   if (flacparse->toc) {
     gst_toc_unref (flacparse->toc);
     flacparse->toc = NULL;
+  }
+  if (flacparse->seektable) {
+    gst_buffer_unref (flacparse->seektable);
+    flacparse->seektable = NULL;
   }
 
   g_list_foreach (flacparse->headers, (GFunc) gst_mini_object_unref, NULL);
@@ -361,6 +366,10 @@ gst_flac_parse_stop (GstBaseParse * parse)
   if (flacparse->toc) {
     gst_toc_unref (flacparse->toc);
     flacparse->toc = NULL;
+  }
+  if (flacparse->seektable) {
+    gst_buffer_unref (flacparse->seektable);
+    flacparse->seektable = NULL;
   }
 
   g_list_foreach (flacparse->headers, (GFunc) gst_mini_object_unref, NULL);
@@ -1132,19 +1141,14 @@ gst_flac_parse_handle_picture (GstFlacParse * flacparse, GstBuffer * buffer)
   if (gst_byte_reader_get_pos (&reader) + img_len > map.size)
     goto error;
 
-  if (!flacparse->tags)
-    flacparse->tags = gst_tag_list_new_empty ();
-
   GST_INFO_OBJECT (flacparse, "Got image of %d bytes", img_len);
 
   if (img_len > 0) {
+    if (flacparse->tags == NULL)
+      flacparse->tags = gst_tag_list_new_empty ();
+
     gst_tag_list_add_id3_image (flacparse->tags,
         map.data + gst_byte_reader_get_pos (&reader), img_len, img_type);
-  }
-
-  if (gst_tag_list_is_empty (flacparse->tags)) {
-    gst_tag_list_unref (flacparse->tags);
-    flacparse->tags = NULL;
   }
 
   gst_buffer_unmap (buffer, &map);
@@ -1163,6 +1167,8 @@ gst_flac_parse_handle_seektable (GstFlacParse * flacparse, GstBuffer * buffer)
   GST_DEBUG_OBJECT (flacparse, "storing seektable");
   /* only store for now;
    * offset of the first frame is needed to get real info */
+  if (flacparse->seektable)
+    gst_buffer_unref (flacparse->seektable);
   flacparse->seektable = gst_buffer_ref (buffer);
 
   return TRUE;
@@ -1463,7 +1469,7 @@ gst_flac_parse_generate_headers (GstFlacParse * flacparse)
     gint64 duration;
 
     if (gst_pad_peer_query_duration (GST_BASE_PARSE_SINK_PAD (flacparse),
-            GST_FORMAT_TIME, &duration)) {
+            GST_FORMAT_TIME, &duration) && duration != -1) {
       duration = GST_CLOCK_TIME_TO_FRAMES (duration, flacparse->samplerate);
 
       map.data[17] |= (duration >> 32) & 0xff;
@@ -1693,30 +1699,24 @@ gst_flac_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
   GstFlacParse *flacparse = GST_FLAC_PARSE (parse);
 
   if (!flacparse->sent_codec_tag) {
-    GstTagList *taglist;
     GstCaps *caps;
 
-    taglist = gst_tag_list_new_empty ();
+    if (flacparse->tags == NULL)
+      flacparse->tags = gst_tag_list_new_empty ();
 
     /* codec tag */
     caps = gst_pad_get_current_caps (GST_BASE_PARSE_SRC_PAD (parse));
-    gst_pb_utils_add_codec_description_to_tag_list (taglist,
+    gst_pb_utils_add_codec_description_to_tag_list (flacparse->tags,
         GST_TAG_AUDIO_CODEC, caps);
     gst_caps_unref (caps);
 
-    gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (flacparse),
-        gst_event_new_tag (taglist));
+    /* Announce our pending tags */
+    gst_base_parse_merge_tags (parse, flacparse->tags, GST_TAG_MERGE_REPLACE);
 
     /* also signals the end of first-frame processing */
     flacparse->sent_codec_tag = TRUE;
   }
 
-  /* Push tags */
-  if (flacparse->tags) {
-    gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (flacparse),
-        gst_event_new_tag (flacparse->tags));
-    flacparse->tags = NULL;
-  }
   /* Push toc */
   if (flacparse->toc) {
     gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (flacparse),
@@ -1796,10 +1796,10 @@ gst_flac_parse_src_event (GstBaseParse * parse, GstEvent * event)
                 GST_BASE_PARSE_CLASS (parent_class)->src_event (parse,
                 seek_event);
 
-            g_free (uid);
           } else {
             GST_WARNING_OBJECT (parse, "no TOC entry with given UID: %s", uid);
           }
+          g_free (uid);
         }
         gst_toc_unref (toc);
       } else {

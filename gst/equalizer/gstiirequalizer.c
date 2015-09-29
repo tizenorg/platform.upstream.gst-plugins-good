@@ -49,6 +49,7 @@ static gboolean gst_iir_equalizer_setup (GstAudioFilter * filter,
     const GstAudioInfo * info);
 static GstFlowReturn gst_iir_equalizer_transform_ip (GstBaseTransform * btrans,
     GstBuffer * buf);
+static void set_passthrough (GstIirEqualizer * equ);
 
 #define ALLOWED_CAPS \
     "audio/x-raw,"                                                \
@@ -159,6 +160,7 @@ gst_iir_equalizer_band_set_property (GObject * object, guint prop_id,
         BANDS_LOCK (equ);
         equ->need_new_coefficients = TRUE;
         band->gain = gain;
+        set_passthrough (equ);
         BANDS_UNLOCK (equ);
         GST_DEBUG_OBJECT (band, "changed gain = %lf ", band->gain);
       }
@@ -362,6 +364,7 @@ gst_iir_equalizer_class_init (GstIirEqualizerClass * klass)
   gobject_class->finalize = gst_iir_equalizer_finalize;
   audio_filter_class->setup = gst_iir_equalizer_setup;
   btrans_class->transform_ip = gst_iir_equalizer_transform_ip;
+  btrans_class->transform_ip_on_passthrough = FALSE;
 
   caps = gst_caps_from_string (ALLOWED_CAPS);
   gst_audio_filter_class_add_pad_templates (audio_filter_class, caps);
@@ -372,7 +375,8 @@ static void
 gst_iir_equalizer_init (GstIirEqualizer * eq)
 {
   g_mutex_init (&eq->bands_lock);
-  eq->need_new_coefficients = TRUE;
+  /* Band gains are 0 by default, passthrough until they are changed */
+  gst_base_transform_set_passthrough (GST_BASE_TRANSFORM (eq), TRUE);
 }
 
 static void
@@ -831,9 +835,6 @@ gst_iir_equalizer_transform_ip (GstBaseTransform * btrans, GstBuffer * buf)
   need_new_coefficients = equ->need_new_coefficients;
   BANDS_UNLOCK (equ);
 
-  if (!need_new_coefficients && gst_base_transform_is_passthrough (btrans))
-    return GST_FLOW_OK;
-
   timestamp = GST_BUFFER_TIMESTAMP (buf);
   timestamp =
       gst_segment_to_stream_time (&btrans->segment, GST_FORMAT_TIME, timestamp);
@@ -854,7 +855,6 @@ gst_iir_equalizer_transform_ip (GstBaseTransform * btrans, GstBuffer * buf)
   BANDS_LOCK (equ);
   if (need_new_coefficients) {
     update_coefficients (equ);
-    set_passthrough (equ);
   }
   BANDS_UNLOCK (equ);
 

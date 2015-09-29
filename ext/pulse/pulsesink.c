@@ -58,9 +58,7 @@
 #include <gst/pbutils/pbutils.h>        /* only used for GST_PLUGINS_BASE_VERSION_* */
 
 #include <gst/glib-compat-private.h>
-#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
-#include <vconf.h>
-#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
+
 #include "pulsesink.h"
 #include "pulseutil.h"
 
@@ -74,9 +72,6 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 #define DEFAULT_VOLUME          1.0
 #define DEFAULT_MUTE            FALSE
 #define MAX_VOLUME              10.0
-#ifdef __TIZEN__
-#define DEFAULT_AUDIO_LATENCY   "high"
-#endif /* __TIZEN__ */
 
 enum
 {
@@ -89,19 +84,8 @@ enum
   PROP_MUTE,
   PROP_CLIENT_NAME,
   PROP_STREAM_PROPERTIES,
-#ifdef __TIZEN__
-  PROP_AUDIO_LATENCY,
-#endif /* __TIZEN__ */
   PROP_LAST
 };
-
-#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
-#define GST_PULSESINK_DUMP_VCONF_KEY            "memory/private/sound/pcm_dump"
-#define GST_PULSESINK_DUMP_INPUT_PATH_PREFIX    "/tmp/dump_pulsesink_in_"
-#define GST_PULSESINK_DUMP_OUTPUT_PATH_PREFIX   "/tmp/dump_pulsesink_out_"
-#define GST_PULSESINK_DUMP_INPUT_FLAG           0x00000400
-#define GST_PULSESINK_DUMP_OUTPUT_FLAG          0x00000800
-#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
 #define GST_TYPE_PULSERING_BUFFER        \
         (gst_pulseringbuffer_get_type())
@@ -122,6 +106,30 @@ typedef struct _GstPulseRingBuffer GstPulseRingBuffer;
 typedef struct _GstPulseRingBufferClass GstPulseRingBufferClass;
 
 typedef struct _GstPulseContext GstPulseContext;
+
+/* A note on threading.
+ *
+ * We use a pa_threaded_mainloop to interact with the PulseAudio server. This
+ * starts up a separate thread that runs a mainloop to carry back events,
+ * messages and timing updates from the PulseAudio server.
+ *
+ * In most cases, the PulseAudio API we use communicates with the server and
+ * processes replies asynchronously. Operations on PA objects that result in
+ * such communication are protected with a pa_threaded_mainloop_lock() and
+ * pa_threaded_mainloop_unlock(). These guarantee mutual exclusion with the
+ * mainloop thread -- when an iteration of the mainloop thread begins, it first
+ * tries to acquire this lock, and cannot do so if our code also holds that
+ * lock.
+ *
+ * When we need to complete an operation synchronously, we use
+ * pa_threaded_mainloop_wait() and pa_threaded_mainloop_signal(). These work
+ * much as pthread conditionals do. pa_threaded_mainloop_wait() is called with
+ * the mainloop lock held. It releases the lock (thereby allowing the mainloop
+ * to execute), and waits till one of our callbacks to be executed by the
+ * mainloop thread calls pa_threaded_mainloop_signal(). At the end of the
+ * mainloop iteration, the pa_threaded_mainloop_wait() will reacquire the
+ * mainloop lock and return control to the caller.
+ */
 
 /* Store the PA contexts in a hash table to allow easy sharing among
  * multiple instances of the sink. Keys are $context_name@$server_name
@@ -536,9 +544,12 @@ gst_pulseringbuffer_open_device (GstAudioRingBuffer * buf)
     pa_context_set_subscribe_callback (pctx->context,
         gst_pulsering_context_subscribe_cb, pctx);
 
+    /* try to connect to the server and wait for completion, we don't want to
+     * autospawn a deamon */
     GST_LOG_OBJECT (psink, "connect to server %s",
         GST_STR_NULL (psink->server));
-    if (pa_context_connect (pctx->context, psink->server, 0, NULL) < 0)
+    if (pa_context_connect (pctx->context, psink->server,
+            PA_CONTEXT_NOAUTOSPAWN, NULL) < 0)
       goto connect_failed;
   } else {
     GST_INFO_OBJECT (psink,
@@ -627,13 +638,6 @@ gst_pulseringbuffer_close_device (GstAudioRingBuffer * buf)
   pa_threaded_mainloop_lock (mainloop);
   gst_pulsering_destroy_context (pbuf);
   pa_threaded_mainloop_unlock (mainloop);
-
-#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
-  if (psink->dump_fd_input) {
-    fclose(psink->dump_fd_input);
-    psink->dump_fd_input = NULL;
-  }
-#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
   GST_LOG_OBJECT (psink, "closed device");
 
@@ -866,39 +870,6 @@ gst_pulsering_wait_for_stream_ready (GstPulseSink * psink, pa_stream * stream)
   }
 }
 
-static void
-gst_pulsesink_sink_exist_cb (pa_context * c, const pa_sink_info * i, int eol,
-    void *userdata)
-{
-  gboolean *is_sink_exist = (gboolean *) userdata;
-
-  if (!i)
-    *is_sink_exist = FALSE;
-  else
-    *is_sink_exist = TRUE;
-  pa_threaded_mainloop_signal (mainloop, 0);
-}
-
-static gboolean
-gst_pulsesink_device_exist(pa_context *context, gchar *dev)
-{
-  pa_operation* o = NULL;
-  gboolean device_exist = FALSE;
-
-  if (!(o = pa_context_get_sink_info_by_name (context, dev,
-          gst_pulsesink_sink_exist_cb, &device_exist)))
-    return device_exist;
-
-  while (pa_operation_get_state (o) == PA_OPERATION_RUNNING) {
-    pa_threaded_mainloop_wait (mainloop);
-    if (!CONTEXT_OK (context))
-      break;
-  }
-
-  pa_operation_unref (o);
-  return device_exist;
-}
-
 
 /* This method should create a new stream of the given @spec. No playback should
  * start yet so we start in the corked state. */
@@ -961,22 +932,6 @@ gst_pulseringbuffer_acquire (GstAudioRingBuffer * buf,
     name = psink->stream_name;
   else
     name = "Playback Stream";
-
-#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
-  if (psink->need_dump_input == TRUE && psink->dump_fd_input == NULL) {
-    char *suffix , *dump_path;
-    GDateTime *time = g_date_time_new_now_local();
-
-    suffix = g_date_time_format(time, "%m%d_%H%M%S");
-    dump_path = g_strdup_printf("%s_%dch_%dhz_%s.pcm", GST_PULSESINK_DUMP_INPUT_PATH_PREFIX, pbuf->channels, spec->rate, suffix);
-
-    psink->dump_fd_input = fopen(dump_path, "w+");
-
-    g_free(suffix);
-    g_free(dump_path);
-    g_date_time_unref(time);
-  }
-#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
   /* create a stream */
   formats[0] = pbuf->format;
@@ -1230,7 +1185,8 @@ gst_pulseringbuffer_clear (GstAudioRingBuffer * buf)
   pa_threaded_mainloop_unlock (mainloop);
 }
 
-/* called from pulse with the mainloop lock */
+#if 0
+/* called from pulse thread with the mainloop lock */
 static void
 mainloop_enter_defer_cb (pa_mainloop_api * api, void *userdata)
 {
@@ -1252,6 +1208,7 @@ mainloop_enter_defer_cb (pa_mainloop_api * api, void *userdata)
   pulsesink->defer_pending--;
   pa_threaded_mainloop_signal (mainloop, 0);
 }
+#endif
 
 /* start/resume playback ASAP, we don't uncork here but in the commit method */
 static gboolean
@@ -1265,11 +1222,6 @@ gst_pulseringbuffer_start (GstAudioRingBuffer * buf)
 
   pa_threaded_mainloop_lock (mainloop);
 
-  GST_DEBUG_OBJECT (psink, "scheduling stream status");
-  psink->defer_pending++;
-  pa_mainloop_api_once (pa_threaded_mainloop_get_api (mainloop),
-      mainloop_enter_defer_cb, psink);
-
   GST_DEBUG_OBJECT (psink, "starting");
   pbuf->paused = FALSE;
 
@@ -1277,6 +1229,21 @@ gst_pulseringbuffer_start (GstAudioRingBuffer * buf)
   if (GST_BASE_SINK_CAST (psink)->eos ||
       g_atomic_int_get (&GST_AUDIO_BASE_SINK (psink)->eos_rendering))
     gst_pulsering_set_corked (pbuf, FALSE, FALSE);
+
+#if 0
+  GST_DEBUG_OBJECT (psink, "scheduling stream status");
+  psink->defer_pending++;
+  pa_mainloop_api_once (pa_threaded_mainloop_get_api (mainloop),
+      mainloop_enter_defer_cb, psink);
+
+  /* Wait for the stream status message to be posted. This needs to be done
+   * synchronously because the callback will take the mainloop lock
+   * (implicitly) and then take the GST_OBJECT_LOCK. Everywhere else, we take
+   * the locks in the reverse order, so not doing this synchronously could
+   * cause a deadlock. */
+  GST_DEBUG_OBJECT (psink, "waiting for stream status (ENTER) to be posted");
+  pa_threaded_mainloop_wait (mainloop);
+#endif
 
   pa_threaded_mainloop_unlock (mainloop);
 
@@ -1309,7 +1276,8 @@ gst_pulseringbuffer_pause (GstAudioRingBuffer * buf)
   return res;
 }
 
-/* called from pulse with the mainloop lock */
+#if 0
+/* called from pulse thread with the mainloop lock */
 static void
 mainloop_leave_defer_cb (pa_mainloop_api * api, void *userdata)
 {
@@ -1331,6 +1299,7 @@ mainloop_leave_defer_cb (pa_mainloop_api * api, void *userdata)
   pulsesink->defer_pending--;
   pa_threaded_mainloop_signal (mainloop, 0);
 }
+#endif
 
 /* stop playback, we flush everything. */
 static gboolean
@@ -1378,11 +1347,20 @@ cleanup:
     pa_operation_cancel (o);
     pa_operation_unref (o);
   }
-
+#if 0
   GST_DEBUG_OBJECT (psink, "scheduling stream status");
   psink->defer_pending++;
   pa_mainloop_api_once (pa_threaded_mainloop_get_api (mainloop),
       mainloop_leave_defer_cb, psink);
+
+  /* Wait for the stream status message to be posted. This needs to be done
+   * synchronously because the callback will take the mainloop lock
+   * (implicitly) and then take the GST_OBJECT_LOCK. Everywhere else, we take
+   * the locks in the reverse order, so not doing this synchronously could
+   * cause a deadlock. */
+  GST_DEBUG_OBJECT (psink, "waiting for stream status (LEAVE) to be posted");
+  pa_threaded_mainloop_wait (mainloop);
+#endif
 
   pa_threaded_mainloop_unlock (mainloop);
 
@@ -1537,6 +1515,12 @@ gst_pulseringbuffer_commit (GstAudioRingBuffer * buf, guint64 * sample,
 
   if (pbuf->paused)
     goto was_paused;
+
+  /* ensure running clock for whatever out there */
+  if (pbuf->corked) {
+    if (!gst_pulsering_set_corked (pbuf, FALSE, FALSE))
+      goto uncork_failed;
+  }
 
   /* offset is in bytes */
   offset = *sample * bpf;
@@ -1905,20 +1889,6 @@ gst_pulsesink_payload (GstAudioBaseSink * sink, GstBuffer * buf)
   }
 }
 
-#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
-static gboolean
-gst_pulsesink_pad_dump_handler (GstPad *pad, GstBuffer *buffer, gpointer data)
-{
-  GstPulseSink *psink = GST_PULSESINK_CAST (data);
-  int ret = -1;
-
-  if (psink->dump_fd_input)
-    ret = fwrite(GST_BUFFER_DATA(buffer), 1, GST_BUFFER_SIZE(buffer), psink->dump_fd_input);
-
-  return !!ret;
-}
-#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
-
 static void
 gst_pulsesink_class_init (GstPulseSinkClass * klass)
 {
@@ -2015,15 +1985,6 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
       g_param_spec_boxed ("stream-properties", "stream properties",
           "list of pulseaudio stream properties",
           GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-
-#ifdef __TIZEN__
-  g_object_class_install_property (gobject_class,
-      PROP_AUDIO_LATENCY,
-      g_param_spec_string ("latency", "Audio Backend Latency",
-          "Audio Backend Latency (\"low\": Low Latency, \"mid\": Mid Latency, \"high\": High Latency)",
-          DEFAULT_AUDIO_LATENCY,
-          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
-#endif /* __TIZEN__ */
 
   gst_element_class_set_static_metadata (gstelement_class,
       "PulseAudio Audio Sink",
@@ -2137,12 +2098,6 @@ gst_pulsesink_create_probe_stream (GstPulseSink * psink,
 
   pa_stream_set_state_callback (stream, gst_pulsering_stream_state_cb, pbuf);
 
-  if (psink->device && !gst_pulsesink_device_exist (pbuf->context, psink->device))
-  {
-    GST_WARNING_OBJECT (psink, "Sink:%s is not exist, set sink name to NULL", psink->device);
-    g_free (psink->device);
-    psink->device = NULL;
-  }
   if (pa_stream_connect_playback (stream, psink->device, NULL, flags, NULL,
           NULL) < 0)
     goto error;
@@ -2187,6 +2142,8 @@ gst_pulsesink_query_getcaps (GstPulseSink * psink, GstCaps * filter)
     goto unlock;
   }
 
+  ret = gst_caps_new_empty ();
+
   if (pbuf->stream) {
     /* We're in PAUSED or higher */
     stream = pbuf->stream;
@@ -2209,17 +2166,16 @@ gst_pulsesink_query_getcaps (GstPulseSink * psink, GstCaps * filter)
 
     pbuf->probe_stream = gst_pulsesink_create_probe_stream (psink, pbuf,
         format);
+
+    pa_format_info_free (format);
+
     if (!pbuf->probe_stream) {
       GST_WARNING_OBJECT (psink, "Could not create probe stream");
       goto unlock;
     }
 
-    pa_format_info_free (format);
-
     stream = pbuf->probe_stream;
   }
-
-  ret = gst_caps_new_empty ();
 
   if (!(o = pa_context_get_sink_info_by_name (pbuf->context,
               pa_stream_get_device_name (stream), gst_pulsesink_sink_info_cb,
@@ -2237,17 +2193,17 @@ gst_pulsesink_query_getcaps (GstPulseSink * psink, GstCaps * filter)
         gst_pulse_format_info_to_caps ((pa_format_info *) i->data));
   }
 
+unlock:
+  pa_threaded_mainloop_unlock (mainloop);
+  /* FIXME: this could be freed after device_name is got */
+  GST_OBJECT_UNLOCK (pbuf);
+
   if (filter) {
     GstCaps *tmp = gst_caps_intersect_full (filter, ret,
         GST_CAPS_INTERSECT_FIRST);
     gst_caps_unref (ret);
     ret = tmp;
   }
-
-unlock:
-  pa_threaded_mainloop_unlock (mainloop);
-  /* FIXME: this could be freed after device_name is got */
-  GST_OBJECT_UNLOCK (pbuf);
 
 out:
   free_device_info (&device_info);
@@ -2405,11 +2361,6 @@ info_failed:
 static void
 gst_pulsesink_init (GstPulseSink * pulsesink)
 {
-#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
-  GstPad *sinkpad = NULL;
-  int vconf_dump = 0;
-#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
-
   pulsesink->server = NULL;
   pulsesink->device = NULL;
   pulsesink->device_info.description = NULL;
@@ -2430,22 +2381,6 @@ gst_pulsesink_init (GstPulseSink * pulsesink)
 
   pulsesink->properties = NULL;
   pulsesink->proplist = NULL;
-#ifdef __TIZEN__
-  pulsesink->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
-  pulsesink->proplist = pa_proplist_new();
-  pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesink->latency);
-#ifdef PCM_DUMP_ENABLE
-  if (vconf_get_int(GST_PULSESINK_DUMP_VCONF_KEY, &vconf_dump)) {
-    GST_WARNING("vconf_get_int %s failed", GST_PULSESINK_DUMP_VCONF_KEY);
-  }
-  pulsesink->need_dump_input = vconf_dump & GST_PULSESINK_DUMP_INPUT_FLAG ? TRUE : FALSE;
-  pulsesink->dump_fd_input = NULL;
-  if (pulsesink->need_dump_input) {
-    sinkpad = gst_element_get_static_pad((GstElement *)pulsesink, "sink");
-    gst_pad_add_buffer_probe (sinkpad, G_CALLBACK (gst_pulsesink_pad_dump_handler), pulsesink);
-  }
-#endif
-#endif /* __TIZEN__ */
 
   /* override with a custom clock */
   if (GST_AUDIO_BASE_SINK (pulsesink)->provided_clock)
@@ -2472,10 +2407,6 @@ gst_pulsesink_finalize (GObject * object)
     gst_structure_free (pulsesink->properties);
   if (pulsesink->proplist)
     pa_proplist_free (pulsesink->proplist);
-
-#ifdef __TIZEN__
-  g_free (pulsesink->latency);
-#endif /* __TIZEN__ */
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -2968,21 +2899,6 @@ gst_pulsesink_set_property (GObject * object,
         pa_proplist_free (pulsesink->proplist);
       pulsesink->proplist = gst_pulse_make_proplist (pulsesink->properties);
       break;
-#ifdef __TIZEN__
-    case PROP_AUDIO_LATENCY:
-      g_free (pulsesink->latency);
-      pulsesink->latency = g_value_dup_string (value);
-      /* setting NULL restores the default latency */
-      if (pulsesink->latency == NULL) {
-        pulsesink->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
-      }
-      if (!pulsesink->proplist) {
-        pulsesink->proplist = pa_proplist_new();
-      }
-      pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesink->latency);
-      GST_DEBUG_OBJECT(pulsesink, "latency(%s)", pulsesink->latency);
-      break;
-#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -3037,11 +2953,6 @@ gst_pulsesink_get_property (GObject * object,
     case PROP_STREAM_PROPERTIES:
       gst_value_set_structure (value, pulsesink->properties);
       break;
-#ifdef __TIZEN__
-    case PROP_AUDIO_LATENCY:
-      g_value_set_string (value, pulsesink->latency);
-      break;
-#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -3263,7 +3174,7 @@ static gboolean
 gst_pulsesink_query (GstBaseSink * sink, GstQuery * query)
 {
   GstPulseSink *pulsesink = GST_PULSESINK_CAST (sink);
-  gboolean ret;
+  gboolean ret = FALSE;
 
   switch (GST_QUERY_TYPE (query)) {
     case GST_QUERY_CAPS:
@@ -3276,10 +3187,9 @@ gst_pulsesink_query (GstBaseSink * sink, GstQuery * query)
       if (caps) {
         gst_query_set_caps_result (query, caps);
         gst_caps_unref (caps);
-        return TRUE;
-      } else {
-        return FALSE;
+        ret = TRUE;
       }
+      break;
     }
     case GST_QUERY_ACCEPT_CAPS:
     {
