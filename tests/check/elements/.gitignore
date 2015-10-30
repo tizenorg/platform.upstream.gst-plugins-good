@@ -1,6 +1,7 @@
 .dirstamp
 aacparse
 ac3parse
+alpha
 alphacolor
 amrparse
 apev2mux
@@ -36,6 +37,7 @@ interleave
 jpegdec
 jpegenc
 level
+matroskademux
 matroskamux
 matroskaparse
 mpegaudioparse
@@ -51,6 +53,7 @@ rtpaux
 rtpbin
 rtpbin_buffer_list
 rtpcollision
+rtph263
 rtpjitterbuffer
 rtpsession
 rtpmux
@@ -58,6 +61,7 @@ rtprtx
 shapewipe
 souphttpsrc
 spectrum
+splitmux
 sunaudio
 udpsink
 udpsrc

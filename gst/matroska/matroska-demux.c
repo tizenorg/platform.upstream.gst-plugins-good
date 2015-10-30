@@ -3700,7 +3700,6 @@ gst_matroska_demux_parse_blockgroup_or_simpleblock (GstMatroskaDemux * demux,
          for 32 bit samples, etc), or bad things will happen downstream as
          elements typically assume minimal alignment.
          Therefore, create an aligned copy if necessary. */
-      g_assert (stream->alignment <= G_MEM_ALIGN);
       sub = gst_matroska_demux_align_buffer (demux, sub, stream->alignment);
 
       if (GST_BUFFER_PTS_IS_VALID (sub)) {
@@ -5012,6 +5011,7 @@ gst_matroska_demux_video_caps (GstMatroskaTrackVideoContext *
         videocontext->pixel_height);
     caps = gst_video_info_to_caps (&info);
     *codec_name = gst_pb_utils_get_codec_description (caps);
+    context->alignment = 32;
   } else if (!strcmp (codec_id, GST_MATROSKA_CODEC_ID_VIDEO_MPEG4_SP)) {
     caps = gst_caps_new_simple ("video/x-divx",
         "divxversion", G_TYPE_INT, 4, NULL);

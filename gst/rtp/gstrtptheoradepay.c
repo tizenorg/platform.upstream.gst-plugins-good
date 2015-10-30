@@ -74,6 +74,9 @@ static gboolean gst_rtp_theora_depay_packet_lost (GstRTPBaseDepayload *
 
 static void gst_rtp_theora_depay_finalize (GObject * object);
 
+static GstStateChangeReturn gst_rtp_theora_depay_change_state (GstElement *
+    element, GstStateChange transition);
+
 static void
 gst_rtp_theora_depay_class_init (GstRtpTheoraDepayClass * klass)
 {
@@ -86,6 +89,8 @@ gst_rtp_theora_depay_class_init (GstRtpTheoraDepayClass * klass)
   gstrtpbasedepayload_class = (GstRTPBaseDepayloadClass *) klass;
 
   gobject_class->finalize = gst_rtp_theora_depay_finalize;
+
+  gstelement_class->change_state = gst_rtp_theora_depay_change_state;
 
   gstrtpbasedepayload_class->process_rtp_packet = gst_rtp_theora_depay_process;
   gstrtpbasedepayload_class->set_caps = gst_rtp_theora_depay_setcaps;
@@ -109,6 +114,20 @@ static void
 gst_rtp_theora_depay_init (GstRtpTheoraDepay * rtptheoradepay)
 {
   rtptheoradepay->adapter = gst_adapter_new ();
+}
+
+static void
+free_config (GstRtpTheoraConfig * config)
+{
+  g_list_free_full (config->headers, (GDestroyNotify) gst_buffer_unref);
+  g_free (config);
+}
+
+static void
+free_indents (GstRtpTheoraDepay * rtptheoradepay)
+{
+  g_list_free_full (rtptheoradepay->configs, (GDestroyNotify) free_config);
+  rtptheoradepay->configs = NULL;
 }
 
 static void
@@ -244,6 +263,7 @@ gst_rtp_theora_depay_parse_configuration (GstRtpTheoraDepay * rtptheoradepay,
       h_size = h_sizes[j];
       if (size < h_size) {
         if (j != n_headers || size + extra != h_size) {
+          free_config (conf);
           goto too_small;
         } else {
           /* otherwise means that overall length field contained total length,
@@ -266,6 +286,8 @@ gst_rtp_theora_depay_parse_configuration (GstRtpTheoraDepay * rtptheoradepay,
   }
 
   gst_buffer_unmap (confbuf, &map);
+  gst_buffer_unref (confbuf);
+
   return TRUE;
 
   /* ERRORS */
@@ -273,6 +295,7 @@ too_small:
   {
     GST_DEBUG_OBJECT (rtptheoradepay, "configuration too small");
     gst_buffer_unmap (confbuf, &map);
+    gst_buffer_unref (confbuf);
     return FALSE;
   }
 }
@@ -407,7 +430,6 @@ gst_rtp_theora_depay_process (GstRTPBaseDepayload * depayload,
 
   rtptheoradepay = GST_RTP_THEORA_DEPAY (depayload);
 
-  payload = gst_rtp_buffer_get_payload (rtp);
   payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
   GST_DEBUG_OBJECT (depayload, "got RTP packet of size %d", payload_len);
@@ -462,7 +484,6 @@ gst_rtp_theora_depay_process (GstRTPBaseDepayload * depayload,
   /* fragmented packets, assemble */
   if (F != 0) {
     GstBuffer *vdata;
-    guint headerskip;
 
     if (F == 1) {
       /* if we start a packet, clear adapter and start assembling. */
@@ -474,10 +495,8 @@ gst_rtp_theora_depay_process (GstRTPBaseDepayload * depayload,
     if (!rtptheoradepay->assembling)
       goto no_output;
 
-    /* first assembled packet, reuse 2 bytes to store the length */
-    headerskip = (F == 1 ? 4 : 6);
     /* skip header and length. */
-    vdata = gst_rtp_buffer_get_payload_subbuffer (rtp, headerskip, -1);
+    vdata = gst_rtp_buffer_get_payload_subbuffer (rtp, 6, -1);
 
     GST_DEBUG_OBJECT (depayload, "assemble theora packet");
     gst_adapter_push (rtptheoradepay->adapter, vdata);
@@ -487,9 +506,10 @@ gst_rtp_theora_depay_process (GstRTPBaseDepayload * depayload,
       goto no_output;
 
     /* construct assembled buffer */
-    payload_buffer =
-        gst_adapter_take_buffer (rtptheoradepay->adapter, payload_len);
+    length = gst_adapter_available (rtptheoradepay->adapter);
+    payload_buffer = gst_adapter_take_buffer (rtptheoradepay->adapter, length);
   } else {
+    length = 0;
     payload_buffer = gst_rtp_buffer_get_payload_subbuffer (rtp, 4, -1);
   }
 
@@ -519,8 +539,15 @@ gst_rtp_theora_depay_process (GstRTPBaseDepayload * depayload,
    * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+*
    */
   while (payload_len >= 2) {
-    payload += 2;
-    payload_len -= 2;
+    /* If length is not 0, we have a reassembled packet for which we
+     * calculated the length already and don't have to skip over the
+     * length field anymore
+     */
+    if (length == 0) {
+      length = GST_READ_UINT16_BE (payload);
+      payload += 2;
+      payload_len -= 2;
+    }
 
     GST_DEBUG_OBJECT (depayload, "read length %u, avail: %d", length,
         payload_len);
@@ -619,6 +646,38 @@ request_keyframe:
             gst_structure_new_empty ("GstForceKeyUnit")));
     goto out;
   }
+}
+
+static GstStateChangeReturn
+gst_rtp_theora_depay_change_state (GstElement * element,
+    GstStateChange transition)
+{
+  GstRtpTheoraDepay *rtptheoradepay;
+  GstStateChangeReturn ret;
+
+  rtptheoradepay = GST_RTP_THEORA_DEPAY (element);
+
+  switch (transition) {
+    case GST_STATE_CHANGE_NULL_TO_READY:
+      break;
+    case GST_STATE_CHANGE_READY_TO_PAUSED:
+      break;
+    default:
+      break;
+  }
+
+  ret = GST_ELEMENT_CLASS (parent_class)->change_state (element, transition);
+
+  switch (transition) {
+    case GST_STATE_CHANGE_PAUSED_TO_READY:
+      free_indents (rtptheoradepay);
+      break;
+    case GST_STATE_CHANGE_READY_TO_NULL:
+      break;
+    default:
+      break;
+  }
+  return ret;
 }
 
 gboolean

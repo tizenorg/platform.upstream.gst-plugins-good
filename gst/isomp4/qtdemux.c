@@ -4192,11 +4192,6 @@ gst_qtdemux_activate_segment (GstQTDemux * qtdemux, QtDemuxStream * stream,
   /* Copy flags from main segment */
   stream->segment.flags = qtdemux->segment.flags;
 
-  /* accumulate previous segments */
-  if (GST_CLOCK_TIME_IS_VALID (stream->segment.stop))
-    stream->accumulated_base += (stream->segment.stop - stream->segment.start) /
-        ABS (stream->segment.rate);
-
   /* update the segment values used for clipping */
   stream->segment.offset = qtdemux->segment.offset;
   stream->segment.base = qtdemux->segment.base + stream->accumulated_base;
@@ -4480,6 +4475,13 @@ next_segment:
       stream->time_position = segment->stop_time;
     }
     /* make sure we select a new segment */
+
+    /* accumulate previous segments */
+    if (GST_CLOCK_TIME_IS_VALID (stream->segment.stop))
+      stream->accumulated_base +=
+          (stream->segment.stop -
+          stream->segment.start) / ABS (stream->segment.rate);
+
     stream->segment_index = -1;
   }
 }
@@ -8545,7 +8547,8 @@ qtdemux_parse_trak (GstQTDemux * qtdemux, GNode * trak)
           "found, assuming preview image or something; skipping track",
           stream->duration, stream->timescale, qtdemux->duration,
           qtdemux->timescale);
-      g_free (stream);
+      if (new_stream)
+        gst_qtdemux_stream_free (qtdemux, stream);
       return TRUE;
     }
   }
@@ -8623,7 +8626,8 @@ qtdemux_parse_trak (GstQTDemux * qtdemux, GNode * trak)
   if (stsd_len < 24) {
     /* .. but skip stream with empty stsd produced by some Vivotek cameras */
     if (stream->subtype == FOURCC_vivo) {
-      g_free (stream);
+      if (new_stream)
+        gst_qtdemux_stream_free (qtdemux, stream);
       return TRUE;
     } else {
       goto corrupt_file;
@@ -8772,6 +8776,9 @@ qtdemux_parse_trak (GstQTDemux * qtdemux, GNode * trak)
             (g & 0xff00) | (b >> 8);
       }
     }
+
+    if (stream->caps)
+      gst_caps_unref (stream->caps);
 
     stream->caps =
         qtdemux_video_caps (qtdemux, stream, fourcc, stsd_data, &codec);
@@ -9502,6 +9509,9 @@ qtdemux_parse_trak (GstQTDemux * qtdemux, GNode * trak)
     } else if (version != 0x00000) {
       GST_WARNING_OBJECT (qtdemux, "unknown audio STSD version %08x", version);
     }
+
+    if (stream->caps)
+      gst_caps_unref (stream->caps);
 
     stream->caps = qtdemux_audio_caps (qtdemux, stream, fourcc,
         stsd_data + 32, len - 16, &codec);

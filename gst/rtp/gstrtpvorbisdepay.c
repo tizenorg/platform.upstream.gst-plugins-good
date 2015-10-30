@@ -113,26 +113,14 @@ gst_rtp_vorbis_depay_init (GstRtpVorbisDepay * rtpvorbisdepay)
 static void
 free_config (GstRtpVorbisConfig * conf)
 {
-  GList *headers;
-
-  for (headers = conf->headers; headers; headers = g_list_next (headers)) {
-    GstBuffer *header = GST_BUFFER_CAST (headers->data);
-
-    gst_buffer_unref (header);
-  }
-  g_list_free (conf->headers);
+  g_list_free_full (conf->headers, (GDestroyNotify) gst_buffer_unref);
   g_free (conf);
 }
 
 static void
 free_indents (GstRtpVorbisDepay * rtpvorbisdepay)
 {
-  GList *walk;
-
-  for (walk = rtpvorbisdepay->configs; walk; walk = g_list_next (walk)) {
-    free_config ((GstRtpVorbisConfig *) walk->data);
-  }
-  g_list_free (rtpvorbisdepay->configs);
+  g_list_free_full (rtpvorbisdepay->configs, (GDestroyNotify) free_config);
   rtpvorbisdepay->configs = NULL;
 }
 
@@ -454,7 +442,6 @@ gst_rtp_vorbis_depay_process (GstRTPBaseDepayload * depayload,
 
   rtpvorbisdepay = GST_RTP_VORBIS_DEPAY (depayload);
 
-  payload = gst_rtp_buffer_get_payload (rtp);
   payload_len = gst_rtp_buffer_get_payload_len (rtp);
 
   GST_DEBUG_OBJECT (depayload, "got RTP packet of size %d", payload_len);
@@ -463,6 +450,7 @@ gst_rtp_vorbis_depay_process (GstRTPBaseDepayload * depayload,
   if (G_UNLIKELY (payload_len < 4))
     goto packet_short;
 
+  payload = gst_rtp_buffer_get_payload (rtp);
   header = GST_READ_UINT32_BE (payload);
   /*
    *  0                   1                   2                   3
@@ -510,7 +498,6 @@ gst_rtp_vorbis_depay_process (GstRTPBaseDepayload * depayload,
   /* fragmented packets, assemble */
   if (F != 0) {
     GstBuffer *vdata;
-    guint headerskip;
 
     if (F == 1) {
       /* if we start a packet, clear adapter and start assembling. */
@@ -522,10 +509,8 @@ gst_rtp_vorbis_depay_process (GstRTPBaseDepayload * depayload,
     if (!rtpvorbisdepay->assembling)
       goto no_output;
 
-    /* first assembled packet, reuse 2 bytes to store the length */
-    headerskip = (F == 1 ? 4 : 6);
     /* skip header and length. */
-    vdata = gst_rtp_buffer_get_payload_subbuffer (rtp, headerskip, -1);
+    vdata = gst_rtp_buffer_get_payload_subbuffer (rtp, 6, -1);
 
     GST_DEBUG_OBJECT (depayload, "assemble vorbis packet");
     gst_adapter_push (rtpvorbisdepay->adapter, vdata);
@@ -535,10 +520,11 @@ gst_rtp_vorbis_depay_process (GstRTPBaseDepayload * depayload,
       goto no_output;
 
     /* construct assembled buffer */
-    payload_buffer =
-        gst_adapter_take_buffer (rtpvorbisdepay->adapter, payload_len);
+    length = gst_adapter_available (rtpvorbisdepay->adapter);
+    payload_buffer = gst_adapter_take_buffer (rtpvorbisdepay->adapter, length);
   } else {
     payload_buffer = gst_rtp_buffer_get_payload_subbuffer (rtp, 4, -1);
+    length = 0;
   }
 
   GST_DEBUG_OBJECT (depayload, "assemble done");
@@ -567,10 +553,15 @@ gst_rtp_vorbis_depay_process (GstRTPBaseDepayload * depayload,
    * +-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+-+*
    */
   while (payload_len > 2) {
-    length = GST_READ_UINT16_BE (payload);
-
-    payload += 2;
-    payload_len -= 2;
+    /* If length is not 0, we have a reassembled packet for which we
+     * calculated the length already and don't have to skip over the
+     * length field anymore
+     */
+    if (length == 0) {
+      length = GST_READ_UINT16_BE (payload);
+      payload += 2;
+      payload_len -= 2;
+    }
 
     GST_DEBUG_OBJECT (depayload, "read length %u, avail: %d", length,
         payload_len);
