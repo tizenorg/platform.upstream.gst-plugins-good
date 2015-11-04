@@ -1,9 +1,8 @@
-DISTCHECK_CONFIGURE_FLAGS=--enable-gtk-doc
+DISTCHECK_CONFIGURE_FLAGS=--disable-gtk-doc
 
 ALWAYS_SUBDIRS =		\
 	gst sys ext 		\
 	tests			\
-	docs			\
 	po			\
 	common			\
 	m4			\

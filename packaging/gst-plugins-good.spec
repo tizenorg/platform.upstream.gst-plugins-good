@@ -2,7 +2,7 @@
 %define gst_branch 1.0
 
 Name:           gst-plugins-good
-Version:        1.6.0
+Version:        1.6.1
 Release:        1
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
