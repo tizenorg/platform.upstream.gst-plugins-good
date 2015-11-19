@@ -9,6 +9,7 @@ Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
 Group:          Multimedia/Framework
 Source:         http://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugins-good-%{version}.tar.xz
+Source100:      common.tar.gz
 BuildRequires:  gcc-c++
 BuildRequires:  gettext-tools
 BuildRequires:  glib2-devel >= 2.31.14
@@ -65,6 +66,7 @@ This package provides complementary plugins for
 
 %prep
 %setup -q -n gst-plugins-good-%{version}
+%setup -q -T -D -a 100
 
 %build
 # FIXME:
