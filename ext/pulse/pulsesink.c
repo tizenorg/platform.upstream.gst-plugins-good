@@ -58,7 +58,9 @@
 #include <gst/pbutils/pbutils.h>        /* only used for GST_PLUGINS_BASE_VERSION_* */
 
 #include <gst/glib-compat-private.h>
-
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+#include <vconf.h>
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 #include "pulsesink.h"
 #include "pulseutil.h"
 
@@ -72,6 +74,9 @@ GST_DEBUG_CATEGORY_EXTERN (pulse_debug);
 #define DEFAULT_VOLUME          1.0
 #define DEFAULT_MUTE            FALSE
 #define MAX_VOLUME              10.0
+#ifdef __TIZEN__
+#define DEFAULT_AUDIO_LATENCY   "mid"
+#endif /* __TIZEN__ */
 
 enum
 {
@@ -84,8 +89,19 @@ enum
   PROP_MUTE,
   PROP_CLIENT_NAME,
   PROP_STREAM_PROPERTIES,
+#ifdef __TIZEN__
+  PROP_AUDIO_LATENCY,
+#endif /* __TIZEN__ */
   PROP_LAST
 };
+
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+#define GST_PULSESINK_DUMP_VCONF_KEY            "memory/private/sound/pcm_dump"
+#define GST_PULSESINK_DUMP_INPUT_PATH_PREFIX    "/tmp/dump_pulsesink_in_"
+#define GST_PULSESINK_DUMP_OUTPUT_PATH_PREFIX   "/tmp/dump_pulsesink_out_"
+#define GST_PULSESINK_DUMP_INPUT_FLAG           0x00000400
+#define GST_PULSESINK_DUMP_OUTPUT_FLAG          0x00000800
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
 #define GST_TYPE_PULSERING_BUFFER        \
         (gst_pulseringbuffer_get_type())
@@ -639,6 +655,13 @@ gst_pulseringbuffer_close_device (GstAudioRingBuffer * buf)
   gst_pulsering_destroy_context (pbuf);
   pa_threaded_mainloop_unlock (mainloop);
 
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+  if (psink->dump_fd_input) {
+    fclose(psink->dump_fd_input);
+    psink->dump_fd_input = NULL;
+  }
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
+
   GST_LOG_OBJECT (psink, "closed device");
 
   return TRUE;
@@ -932,6 +955,22 @@ gst_pulseringbuffer_acquire (GstAudioRingBuffer * buf,
     name = psink->stream_name;
   else
     name = "Playback Stream";
+
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+  if (psink->need_dump_input == TRUE && psink->dump_fd_input == NULL) {
+    char *suffix , *dump_path;
+    GDateTime *time = g_date_time_new_now_local();
+
+    suffix = g_date_time_format(time, "%m%d_%H%M%S");
+    dump_path = g_strdup_printf("%s_%dch_%dhz_%s.pcm", GST_PULSESINK_DUMP_INPUT_PATH_PREFIX, pbuf->channels, spec->rate, suffix);
+
+    psink->dump_fd_input = fopen(dump_path, "w+");
+
+    g_free(suffix);
+    g_free(dump_path);
+    g_date_time_unref(time);
+  }
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
 
   /* create a stream */
   formats[0] = pbuf->format;
@@ -1889,6 +1928,20 @@ gst_pulsesink_payload (GstAudioBaseSink * sink, GstBuffer * buf)
   }
 }
 
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+static gboolean
+gst_pulsesink_pad_dump_handler (GstPad *pad, GstBuffer *buffer, gpointer data)
+{
+  GstPulseSink *psink = GST_PULSESINK_CAST (data);
+  int ret = -1;
+
+  if (psink->dump_fd_input)
+    ret = fwrite(GST_BUFFER_DATA(buffer), 1, GST_BUFFER_SIZE(buffer), psink->dump_fd_input);
+
+  return !!ret;
+}
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
+
 static void
 gst_pulsesink_class_init (GstPulseSinkClass * klass)
 {
@@ -1985,6 +2038,15 @@ gst_pulsesink_class_init (GstPulseSinkClass * klass)
       g_param_spec_boxed ("stream-properties", "stream properties",
           "list of pulseaudio stream properties",
           GST_TYPE_STRUCTURE, G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+
+#ifdef __TIZEN__
+  g_object_class_install_property (gobject_class,
+      PROP_AUDIO_LATENCY,
+      g_param_spec_string ("latency", "Audio Backend Latency",
+          "Audio Backend Latency (\"low\": Low Latency, \"mid\": Mid Latency, \"high\": High Latency)",
+          DEFAULT_AUDIO_LATENCY,
+          G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+#endif /* __TIZEN__ */
 
   gst_element_class_set_static_metadata (gstelement_class,
       "PulseAudio Audio Sink",
@@ -2361,6 +2423,11 @@ info_failed:
 static void
 gst_pulsesink_init (GstPulseSink * pulsesink)
 {
+#if defined(__TIZEN__) && defined(PCM_DUMP_ENABLE)
+  GstPad *sinkpad = NULL;
+  int vconf_dump = 0;
+#endif /* __TIZEN__ && PCM_DUMP_ENABLE */
+
   pulsesink->server = NULL;
   pulsesink->device = NULL;
   pulsesink->device_info.description = NULL;
@@ -2381,6 +2448,22 @@ gst_pulsesink_init (GstPulseSink * pulsesink)
 
   pulsesink->properties = NULL;
   pulsesink->proplist = NULL;
+#ifdef __TIZEN__
+  pulsesink->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
+  pulsesink->proplist = pa_proplist_new();
+  pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesink->latency);
+#ifdef PCM_DUMP_ENABLE
+  if (vconf_get_int(GST_PULSESINK_DUMP_VCONF_KEY, &vconf_dump)) {
+    GST_WARNING("vconf_get_int %s failed", GST_PULSESINK_DUMP_VCONF_KEY);
+  }
+  pulsesink->need_dump_input = vconf_dump & GST_PULSESINK_DUMP_INPUT_FLAG ? TRUE : FALSE;
+  pulsesink->dump_fd_input = NULL;
+  if (pulsesink->need_dump_input) {
+    sinkpad = gst_element_get_static_pad((GstElement *)pulsesink, "sink");
+    gst_pad_add_buffer_probe (sinkpad, G_CALLBACK (gst_pulsesink_pad_dump_handler), pulsesink);
+  }
+#endif
+#endif /* __TIZEN__ */
 
   /* override with a custom clock */
   if (GST_AUDIO_BASE_SINK (pulsesink)->provided_clock)
@@ -2407,6 +2490,10 @@ gst_pulsesink_finalize (GObject * object)
     gst_structure_free (pulsesink->properties);
   if (pulsesink->proplist)
     pa_proplist_free (pulsesink->proplist);
+
+#ifdef __TIZEN__
+  g_free (pulsesink->latency);
+#endif /* __TIZEN__ */
 
   G_OBJECT_CLASS (parent_class)->finalize (object);
 }
@@ -2899,6 +2986,21 @@ gst_pulsesink_set_property (GObject * object,
         pa_proplist_free (pulsesink->proplist);
       pulsesink->proplist = gst_pulse_make_proplist (pulsesink->properties);
       break;
+#ifdef __TIZEN__
+    case PROP_AUDIO_LATENCY:
+      g_free (pulsesink->latency);
+      pulsesink->latency = g_value_dup_string (value);
+      /* setting NULL restores the default latency */
+      if (pulsesink->latency == NULL) {
+        pulsesink->latency = g_strdup (DEFAULT_AUDIO_LATENCY);
+      }
+      if (!pulsesink->proplist) {
+        pulsesink->proplist = pa_proplist_new();
+      }
+      pa_proplist_sets(pulsesink->proplist, PA_PROP_MEDIA_TIZEN_AUDIO_LATENCY, pulsesink->latency);
+      GST_DEBUG_OBJECT(pulsesink, "latency(%s)", pulsesink->latency);
+      break;
+#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
@@ -2953,6 +3055,11 @@ gst_pulsesink_get_property (GObject * object,
     case PROP_STREAM_PROPERTIES:
       gst_value_set_structure (value, pulsesink->properties);
       break;
+#ifdef __TIZEN__
+    case PROP_AUDIO_LATENCY:
+      g_value_set_string (value, pulsesink->latency);
+      break;
+#endif /* __TIZEN__ */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
