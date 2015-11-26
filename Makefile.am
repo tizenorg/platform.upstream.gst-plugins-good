@@ -1,9 +1,8 @@
-DISTCHECK_CONFIGURE_FLAGS=--enable-gtk-doc
+DISTCHECK_CONFIGURE_FLAGS=--disable-gtk-doc
 
 ALWAYS_SUBDIRS =		\
 	gst sys ext 		\
 	tests			\
-	docs			\
 	po			\
 	common			\
 	m4			\
@@ -35,17 +34,13 @@ include $(top_srcdir)/common/release.mak
 include $(top_srcdir)/common/po.mak
 
 check-valgrind:
-	$(MAKE) -C tests/check check-valgrind
+	cd tests/check && make check-valgrind
 
 if HAVE_GST_CHECK
 check-torture:
-	$(MAKE) -C tests/check torture
-build-checks:
-	$(MAKE) -C tests/check build-checks
+	cd tests/check && make torture
 else
 check-torture:
-	true
-build-checks:
 	true
 endif
 
