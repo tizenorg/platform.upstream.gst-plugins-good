@@ -21,7 +21,7 @@
 #define __RTP_SOURCE_H__
 
 #include <gst/gst.h>
-#include <gst/rtp/gstrtcpbuffer.h>
+#include <gst/rtp/rtp.h>
 #include <gst/net/gstnetaddressmeta.h>
 #include <gio/gio.h>
 
@@ -158,7 +158,7 @@ struct _RTPSource {
   gint          payload;
   GstCaps      *caps;
   gint          clock_rate;
-  gint32        seqnum_base;
+  gint32        seqnum_offset;
 
   GstClockTime  bye_time;
   GstClockTime  last_activity;

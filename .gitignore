@@ -20,6 +20,7 @@ install-sh
 depcomp
 autoregen.sh
 ABOUT-NLS
+/INSTALL
 _stdint.h
 gst-plugins-good-*.tar.*
 .dirstamp
@@ -39,9 +40,9 @@ Makefile
 
 /m4
 
-ext/dv/smpte_test
-
-gst/deinterlace/tvtime.h
+/ext/dv/smpte_test
+/gst/multifile/test-splitmux-part-reader
+/gst/deinterlace/tvtime.h
 
 tmp-orc.c
 *orc.h

@@ -1,13 +1,13 @@
 # Polish translation for gst-plugins-good.
 # This file is distributed under the same license as the gst-plugins-good package.
-# Jakub Bogusz <qboosh@pld-linux.org>, 2007-2014.
+# Jakub Bogusz <qboosh@pld-linux.org>, 2007-2015.
 #
 msgid ""
 msgstr ""
-"Project-Id-Version: gst-plugins-good 1.3.90\n"
+"Project-Id-Version: gst-plugins-good 1.6.0\n"
 "Report-Msgid-Bugs-To: http://bugzilla.gnome.org/\n"
-"POT-Creation-Date: 2014-08-27 14:30+0300\n"
-"PO-Revision-Date: 2014-06-29 10:45+0200\n"
+"POT-Creation-Date: 2015-10-30 14:27+0200\n"
+"PO-Revision-Date: 2015-10-15 20:49+0200\n"
 "Last-Translator: Jakub Bogusz <qboosh@pld-linux.org>\n"
 "Language-Team: Polish <translation-team-pl@lists.sourceforge.net>\n"
 "Language: pl\n"
@@ -45,7 +45,7 @@ msgid "Secure connection setup failed."
 msgstr "Ustanowienie bezpiecznego połączenia nie powiodło się."
 
 msgid ""
-"A network error occured, or the server closed the connection unexpectedly."
+"A network error occurred, or the server closed the connection unexpectedly."
 msgstr "Wystąpił błąd sieciowy lub serwer nieoczekiwanie zamknął połączenie."
 
 msgid "Server sent bad data."
@@ -83,6 +83,9 @@ msgstr "Obraz w tym pliku może nie być odtwarzany prawidłowo."
 msgid "This file contains too many streams. Only playing first %d"
 msgstr "Ten plik zawiera zbyt dużo strumieni. Odtwarzanie tylko %d pierwszych"
 
+msgid "Internal data flow error."
+msgstr "Błąd wewnętrzny przepływu danych."
+
 msgid ""
 "No supported stream was found. You might need to install a GStreamer RTSP "
 "extension plugin for Real media streams."
@@ -98,9 +101,6 @@ msgstr ""
 "Nie znaleziono obsługiwanego strumienia. Być może trzeba zezwolić na więcej "
 "protokołów transportu, albo może brakować właściwej wtyczki rozszerzenia "
 "RTSP GStreamera."
-
-msgid "Internal data flow error."
-msgstr "Błąd wewnętrzny przepływu danych."
 
 msgid ""
 "Could not open audio device for playback. Device is being used by another "
@@ -223,10 +223,6 @@ msgstr "Sterownik urządzenia '%s' nie obsługuje metody we/wy %d"
 #, c-format
 msgid "The driver of device '%s' does not support any known IO method."
 msgstr "Sterownik urządzenia '%s' nie obsługuje żadnej znanej metody we/wy."
-
-#, c-format
-msgid "Device '%s' does not support video capture"
-msgstr "Urządzenie '%s' nie obsługuje przechwytywania obrazu"
 
 #, c-format
 msgid "Device '%s' is busy"

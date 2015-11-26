@@ -201,7 +201,7 @@ gst_spectrum_class_init (GstSpectrumClass * klass)
 
   g_object_class_install_property (gobject_class, PROP_BANDS,
       g_param_spec_uint ("bands", "Bands", "Number of frequency bands",
-          0, G_MAXUINT, DEFAULT_BANDS,
+          2, ((guint) G_MAXINT + 2) / 2, DEFAULT_BANDS,
           G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
 
   g_object_class_install_property (gobject_class, PROP_THRESHOLD,
@@ -746,8 +746,7 @@ gst_spectrum_message_new (GstSpectrum * spectrum, GstClockTime timestamp,
             spectrum->bands);
       }
       if (spectrum->message_phase) {
-        gst_spectrum_message_add_array (pcv, cd->spect_magnitude,
-            spectrum->bands);
+        gst_spectrum_message_add_array (pcv, cd->spect_phase, spectrum->bands);
       }
     }
   }

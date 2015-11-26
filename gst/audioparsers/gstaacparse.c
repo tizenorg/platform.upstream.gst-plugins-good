@@ -82,7 +82,7 @@ static const gint loas_sample_rate_table[32] = {
 
 static const gint loas_channels_table[32] = {
   0, 1, 2, 3, 4, 5, 6, 8,
-  0, 0, 0, 0, 0, 0, 0, 0
+  0, 0, 0, 7, 8, 0, 8, 0
 };
 
 static gboolean gst_aac_parse_start (GstBaseParse * parse);
@@ -144,6 +144,7 @@ gst_aac_parse_init (GstAacParse * aacparse)
 {
   GST_DEBUG ("initialized");
   GST_PAD_SET_ACCEPT_INTERSECT (GST_BASE_PARSE_SINK_PAD (aacparse));
+  GST_PAD_SET_ACCEPT_TEMPLATE (GST_BASE_PARSE_SINK_PAD (aacparse));
 }
 
 
@@ -164,8 +165,9 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
   GstCaps *src_caps = NULL, *allowed;
   gboolean res = FALSE;
   const gchar *stream_format;
-  GstBuffer *codec_data;
+  guint8 codec_data[2];
   guint16 codec_data_data;
+  gint sample_rate_idx;
 
   GST_DEBUG_OBJECT (aacparse, "sink caps: %" GST_PTR_FORMAT, sink_caps);
   if (sink_caps)
@@ -194,6 +196,17 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
       stream_format = NULL;
   }
 
+  /* Generate codec data to be able to set profile/level on the caps */
+  sample_rate_idx =
+      gst_codec_utils_aac_get_index_from_sample_rate (aacparse->sample_rate);
+  if (sample_rate_idx < 0)
+    goto not_a_known_rate;
+  codec_data_data =
+      (aacparse->object_type << 11) |
+      (sample_rate_idx << 7) | (aacparse->channels << 3);
+  GST_WRITE_UINT16_BE (codec_data, codec_data_data);
+  gst_codec_utils_aac_caps_set_level_and_profile (src_caps, codec_data, 2);
+
   s = gst_caps_get_structure (src_caps, 0);
   if (aacparse->sample_rate > 0)
     gst_structure_set (s, "rate", G_TYPE_INT, aacparse->sample_rate, NULL);
@@ -203,7 +216,7 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
     gst_structure_set (s, "stream-format", G_TYPE_STRING, stream_format, NULL);
 
   allowed = gst_pad_get_allowed_caps (GST_BASE_PARSE (aacparse)->srcpad);
-  if (!gst_caps_can_intersect (src_caps, allowed)) {
+  if (allowed && !gst_caps_can_intersect (src_caps, allowed)) {
     GST_DEBUG_OBJECT (GST_BASE_PARSE (aacparse)->srcpad,
         "Caps can not intersect");
     if (aacparse->header_type == DSPAAC_HEADER_ADTS) {
@@ -212,14 +225,7 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
       gst_caps_set_simple (src_caps, "stream-format", G_TYPE_STRING, "raw",
           NULL);
       if (gst_caps_can_intersect (src_caps, allowed)) {
-        GstMapInfo map;
-        int idx;
-
-        idx =
-            gst_codec_utils_aac_get_index_from_sample_rate
-            (aacparse->sample_rate);
-        if (idx < 0)
-          goto not_a_known_rate;
+        GstBuffer *codec_data_buffer;
 
         GST_DEBUG_OBJECT (GST_BASE_PARSE (aacparse)->srcpad,
             "Caps can intersect, we will drop the ADTS layer");
@@ -227,15 +233,10 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
 
         /* The codec_data data is according to AudioSpecificConfig,
            ISO/IEC 14496-3, 1.6.2.1 */
-        codec_data = gst_buffer_new_and_alloc (2);
-        gst_buffer_map (codec_data, &map, GST_MAP_WRITE);
-        codec_data_data =
-            (aacparse->object_type << 11) |
-            (idx << 7) | (aacparse->channels << 3);
-        GST_WRITE_UINT16_BE (map.data, codec_data_data);
-        gst_buffer_unmap (codec_data, &map);
+        codec_data_buffer = gst_buffer_new_and_alloc (2);
+        gst_buffer_fill (codec_data_buffer, 0, codec_data, 2);
         gst_caps_set_simple (src_caps, "codec_data", GST_TYPE_BUFFER,
-            codec_data, NULL);
+            codec_data_buffer, NULL);
       }
     } else if (aacparse->header_type == DSPAAC_HEADER_NONE) {
       GST_DEBUG_OBJECT (GST_BASE_PARSE (aacparse)->srcpad,
@@ -249,7 +250,8 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
       }
     }
   }
-  gst_caps_unref (allowed);
+  if (allowed)
+    gst_caps_unref (allowed);
 
   GST_DEBUG_OBJECT (aacparse, "setting src caps: %" GST_PTR_FORMAT, src_caps);
 
@@ -258,7 +260,8 @@ gst_aac_parse_set_src_caps (GstAacParse * aacparse, GstCaps * sink_caps)
   return res;
 
 not_a_known_rate:
-  gst_caps_unref (allowed);
+  GST_ERROR_OBJECT (aacparse, "Not a known sample rate: %d",
+      aacparse->sample_rate);
   gst_caps_unref (src_caps);
   return FALSE;
 }
@@ -306,6 +309,12 @@ gst_aac_parse_sink_setcaps (GstBaseParse * parse, GstCaps * caps)
       aacparse->sample_rate =
           gst_codec_utils_aac_get_sample_rate_from_index (sr_idx);
       aacparse->channels = (map.data[1] & 0x78) >> 3;
+      if (aacparse->channels == 7)
+        aacparse->channels = 8;
+      else if (aacparse->channels == 11)
+        aacparse->channels = 7;
+      else if (aacparse->channels == 12 || aacparse->channels == 14)
+        aacparse->channels = 8;
       aacparse->header_type = DSPAAC_HEADER_NONE;
       aacparse->mpegversion = 4;
       aacparse->frame_samples = (map.data[1] & 4) ? 960 : 1024;
@@ -393,8 +402,10 @@ gst_aac_parse_check_adts_frame (GstAacParse * aacparse,
 
   /* Absolute minimum to perform the ADTS syncword,
      layer and sampling frequency tests */
-  if (G_UNLIKELY (avail < 3))
+  if (G_UNLIKELY (avail < 3)) {
+    *needed_data = 3;
     return FALSE;
+  }
 
   /* Syncword and layer tests */
   if ((data[0] == 0xff) && ((data[1] & 0xf6) == 0xf0)) {
@@ -417,8 +428,10 @@ gst_aac_parse_check_adts_frame (GstAacParse * aacparse,
     crc_size = (data[1] & 0x01) ? 0 : 2;
 
     /* CRC size test */
-    if (*framesize < 7 + crc_size)
+    if (*framesize < 7 + crc_size) {
+      *needed_data = 7 + crc_size;
       return FALSE;
+    }
 
     /* In EOS mode this is enough. No need to examine the data further.
        We also relax the check when we have sync, on the assumption that
@@ -568,9 +581,11 @@ gst_aac_parse_read_loas_config (GstAacParse * aacparse, const guint8 * data,
   if (!gst_bit_reader_get_bits_uint8 (&br, &u8, 1))
     return FALSE;
   if (u8) {
-    GST_DEBUG_OBJECT (aacparse, "Frame uses previous config");
+    GST_LOG_OBJECT (aacparse, "Frame uses previous config");
     if (!aacparse->sample_rate || !aacparse->channels) {
-      GST_WARNING_OBJECT (aacparse, "No previous config to use");
+      GST_DEBUG_OBJECT (aacparse,
+          "No previous config to use. We'll look for more data.");
+      return FALSE;
     }
     *sample_rate = aacparse->sample_rate;
     *channels = aacparse->channels;
@@ -640,6 +655,7 @@ gst_aac_parse_read_loas_config (GstAacParse * aacparse, const guint8 * data,
     GST_LOG_OBJECT (aacparse, "More data ignored");
   } else {
     GST_WARNING_OBJECT (aacparse, "Spec says \"TBD\"...");
+    return FALSE;
   }
   return TRUE;
 }
@@ -701,8 +717,10 @@ gst_aac_parse_check_loas_frame (GstAacParse * aacparse,
   *needed_data = 0;
 
   /* 3 byte header */
-  if (G_UNLIKELY (avail < 3))
+  if (G_UNLIKELY (avail < 3)) {
+    *needed_data = 3;
     return FALSE;
+  }
 
   if ((data[0] == 0x56) && ((data[1] & 0xe0) == 0xe0)) {
     *framesize = gst_aac_parse_loas_get_frame_len (data);
@@ -751,8 +769,11 @@ gst_aac_parse_parse_adts_header (GstAacParse * aacparse, const guint8 * data,
 
     *rate = gst_codec_utils_aac_get_sample_rate_from_index (sr_idx);
   }
-  if (channels)
+  if (channels) {
     *channels = ((data[2] & 0x01) << 2) | ((data[3] & 0xc0) >> 6);
+    if (*channels == 7)
+      *channels = 8;
+  }
 
   if (version)
     *version = (data[1] & 0x08) ? 2 : 4;
@@ -801,7 +822,7 @@ gst_aac_parse_detect_stream (GstAacParse * aacparse,
 
   for (i = 0; i < avail - 4; i++) {
     if (((data[i] == 0xff) && ((data[i + 1] & 0xf6) == 0xf0)) ||
-        ((data[0] == 0x56) && ((data[1] & 0xe0) == 0xe0)) ||
+        ((data[i] == 0x56) && ((data[i + 1] & 0xe0) == 0xe0)) ||
         strncmp ((char *) data + i, "ADIF", 4) == 0) {
       GST_DEBUG_OBJECT (aacparse, "Found signature at offset %u", i);
       found = TRUE;
@@ -850,7 +871,7 @@ gst_aac_parse_detect_stream (GstAacParse * aacparse,
 
   if (gst_aac_parse_check_loas_frame (aacparse, data, avail, drain,
           framesize, &need_data_loas)) {
-    gint rate, channels;
+    gint rate = 0, channels = 0;
 
     GST_INFO ("LOAS, framesize: %d", *framesize);
 
@@ -858,7 +879,9 @@ gst_aac_parse_detect_stream (GstAacParse * aacparse,
 
     if (!gst_aac_parse_read_loas_config (aacparse, data, avail, &rate,
             &channels, &aacparse->mpegversion)) {
-      GST_WARNING_OBJECT (aacparse, "Error reading LOAS config");
+      /* This is pretty normal when skipping data at the start of
+       * random stream (MPEG-TS capture for example) */
+      GST_LOG_OBJECT (aacparse, "Error reading LOAS config");
       return FALSE;
     }
 
@@ -866,10 +889,10 @@ gst_aac_parse_detect_stream (GstAacParse * aacparse,
       gst_base_parse_set_frame_rate (GST_BASE_PARSE (aacparse), rate,
           aacparse->frame_samples, 2, 2);
 
+      /* Don't store the sample rate and channels yet -
+       * this is just format detection. */
       GST_DEBUG ("LOAS: samplerate %d, channels %d, objtype %d, version %d",
           rate, channels, aacparse->object_type, aacparse->mpegversion);
-      aacparse->sample_rate = rate;
-      aacparse->channels = channels;
     }
 
     gst_base_parse_set_syncable (GST_BASE_PARSE (aacparse), TRUE);
@@ -1038,6 +1061,10 @@ gst_aac_parse_get_audio_channel_configuration (gint num_channels)
     return (guint8) 7U;
   else
     return G_MAXUINT8;
+
+  /* FIXME: Add support for configurations 11, 12 and 14 from
+   * ISO/IEC 14496-3:2009/PDAM 4 based on the actual channel layout
+   */
 }
 
 /**
@@ -1146,7 +1173,7 @@ gst_aac_parse_prepend_adts_headers (GstAacParse * aacparse,
   adts_headers[6] = 0xFCU;
 
   mem = gst_memory_new_wrapped (0, adts_headers, ADTS_HEADERS_LENGTH, 0,
-      ADTS_HEADERS_LENGTH, NULL, NULL);
+      ADTS_HEADERS_LENGTH, adts_headers, g_free);
   gst_buffer_prepend_memory (frame->out_buffer, mem);
 
   return TRUE;
@@ -1186,7 +1213,7 @@ gst_aac_parse_handle_frame (GstBaseParse * parse,
   gboolean lost_sync;
   GstBuffer *buffer;
   guint framesize;
-  gint rate, channels;
+  gint rate = 0, channels = 0;
 
   aacparse = GST_AAC_PARSE (parse);
   buffer = frame->buffer;
@@ -1213,8 +1240,9 @@ gst_aac_parse_handle_frame (GstBaseParse * parse,
     ret = gst_aac_parse_check_adts_frame (aacparse, map.data, map.size,
         GST_BASE_PARSE_DRAINING (parse), &framesize, &needed_data);
 
-    if (!ret) {
+    if (!ret && needed_data) {
       GST_DEBUG ("buffer didn't contain valid frame");
+      *skipsize = 0;
       gst_base_parse_set_min_frame_size (GST_BASE_PARSE (aacparse),
           needed_data);
     }
@@ -1225,8 +1253,9 @@ gst_aac_parse_handle_frame (GstBaseParse * parse,
     ret = gst_aac_parse_check_loas_frame (aacparse, map.data,
         map.size, GST_BASE_PARSE_DRAINING (parse), &framesize, &needed_data);
 
-    if (!ret) {
+    if (!ret && needed_data) {
       GST_DEBUG ("buffer didn't contain valid frame");
+      *skipsize = 0;
       gst_base_parse_set_min_frame_size (GST_BASE_PARSE (aacparse),
           needed_data);
     }
@@ -1269,9 +1298,15 @@ gst_aac_parse_handle_frame (GstBaseParse * parse,
     frame->overhead = 3;
 
     if (!gst_aac_parse_read_loas_config (aacparse, map.data, map.size, &rate,
-            &channels, NULL)) {
-      GST_WARNING_OBJECT (aacparse, "Error reading LOAS config");
-    } else if (G_UNLIKELY (rate != aacparse->sample_rate
+            &channels, NULL) || !rate || !channels) {
+      /* This is pretty normal when skipping data at the start of
+       * random stream (MPEG-TS capture for example) */
+      GST_DEBUG_OBJECT (aacparse, "Error reading LOAS config. Skipping.");
+      *skipsize = map.size;
+      goto exit;
+    }
+
+    if (G_UNLIKELY (rate != aacparse->sample_rate
             || channels != aacparse->channels)) {
       aacparse->sample_rate = rate;
       aacparse->channels = channels;
@@ -1340,8 +1375,8 @@ gst_aac_parse_pre_push_frame (GstBaseParse * parse, GstBaseParseFrame * frame)
         GST_TAG_AUDIO_CODEC, caps);
     gst_caps_unref (caps);
 
-    gst_pad_push_event (GST_BASE_PARSE_SRC_PAD (aacparse),
-        gst_event_new_tag (taglist));
+    gst_base_parse_merge_tags (parse, taglist, GST_TAG_MERGE_REPLACE);
+    gst_tag_list_unref (taglist);
 
     /* also signals the end of first-frame processing */
     aacparse->sent_codec_tag = TRUE;

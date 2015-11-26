@@ -27,6 +27,8 @@
 
 #include <glib.h>
 #include <glib/gprintf.h>
+
+#define SOUP_VERSION_MIN_REQUIRED (SOUP_VERSION_2_40)
 #include <libsoup/soup.h>
 #include <gst/check/gstcheck.h>
 
@@ -124,6 +126,7 @@ run_test (const char *format, ...)
   g_free (url);
 
   g_object_set (src, "automatic-redirect", redirect, NULL);
+  g_object_set (src, "ssl-ca-file", GST_TEST_FILES_PATH "/test-cert.pem", NULL);
   if (cookies != NULL)
     g_object_set (src, "cookies", cookies, NULL);
   g_object_set (sink, "signal-handoffs", TRUE, NULL);
@@ -384,33 +387,8 @@ GST_START_TEST (test_icy_stream)
   gst_bin_add (GST_BIN (pipe), sink);
   fail_unless (gst_element_link (src, sink));
 
-  /* First try Virgin Radio Ogg stream, to see if there's connectivity and all
-   * (which is an attempt to work around the completely horrid error reporting
-   * and that we can't distinguish different types of failures here). */
-
-  g_object_set (src, "location", "http://ogg2.smgradio.com/vr32.ogg", NULL);
-  g_object_set (src, "num-buffers", 1, NULL);
-  icy_caps = FALSE;
-  gst_element_set_state (pipe, GST_STATE_PLAYING);
-
-  msg = gst_bus_poll (GST_ELEMENT_BUS (pipe),
-      GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
-  if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_ERROR) {
-    GST_INFO ("looks like there's no net connectivity or sgmradio.com is "
-        "down. In any case, let's just skip this test");
-    gst_message_unref (msg);
-    goto done;
-  }
-  gst_message_unref (msg);
-  msg = NULL;
-  gst_element_set_state (pipe, GST_STATE_NULL);
-
-  /* Now, if the ogg stream works, the mp3 shoutcast stream should work as
-   * well (time will tell if that's true) */
-
   /* Virgin Radio 32kbps mp3 shoutcast stream */
   g_object_set (src, "location", "http://mp3-vr-32.smgradio.com:80/", NULL);
-
 
   /* EOS after the first buffer */
   g_object_set (src, "num-buffers", 1, NULL);
@@ -419,22 +397,24 @@ GST_START_TEST (test_icy_stream)
   msg = gst_bus_poll (GST_ELEMENT_BUS (pipe),
       GST_MESSAGE_EOS | GST_MESSAGE_ERROR, -1);
 
-  if (GST_MESSAGE_TYPE (msg) == GST_MESSAGE_EOS) {
-    GST_DEBUG ("success, we're done here");
-    gst_message_unref (msg);
-    goto done;
+  switch (GST_MESSAGE_TYPE (msg)) {
+    case GST_MESSAGE_EOS:
+      GST_DEBUG ("success, we're done here");
+      gst_message_unref (msg);
+      break;
+    case GST_MESSAGE_ERROR:{
+      GError *err = NULL;
+
+      gst_message_parse_error (msg, &err, NULL);
+      GST_INFO ("Error with ICY mp3 shoutcast stream: %s", err->message);
+      gst_message_unref (msg);
+      g_clear_error (&err);
+      break;
+    }
+    default:
+      break;
   }
 
-  {
-    GError *err = NULL;
-
-    gst_message_parse_error (msg, &err, NULL);
-    gst_message_unref (msg);
-    g_error ("Error with ICY mp3 shoutcast stream: %s", err->message);
-    g_error_free (err);
-  }
-
-done:
   icy_caps = FALSE;
 
   gst_element_set_state (pipe, GST_STATE_NULL);
@@ -600,7 +580,12 @@ run_server (guint * http_port, guint * https_port)
 
   *http_port = *https_port = 0;
 
+  /* The G_ENABLE_DIAGNOSTIC is temporarily overriden to avoid
+   * property deprecation warnings (for the SOUP_SERVER_PORT
+   * property) */
+  g_setenv ("G_ENABLE_DIAGNOSTIC", "0", TRUE);
   server = soup_server_new (SOUP_SERVER_PORT, port, NULL);
+  g_setenv ("G_ENABLE_DIAGNOSTIC", "1", TRUE);
   if (!server) {
     GST_DEBUG ("Unable to bind to server port %u", port);
     return FALSE;

@@ -26,6 +26,7 @@
 #include <gst/rtp/gstrtpbuffer.h>
 
 #include "gstrtpgstpay.h"
+#include "gstrtputils.h"
 
 GST_DEBUG_CATEGORY_STATIC (gst_rtp_pay_debug);
 #define GST_CAT_DEFAULT gst_rtp_pay_debug
@@ -76,8 +77,7 @@ GST_STATIC_PAD_TEMPLATE ("src",
 enum
 {
   PROP_0,
-  PROP_CONFIG_INTERVAL,
-  PROP_LAST
+  PROP_CONFIG_INTERVAL
 };
 
 #define DEFAULT_CONFIG_INTERVAL		      0
@@ -337,9 +337,10 @@ gst_rtp_gst_pay_create_from_adapter (GstRtpGSTPay * rtpgstpay,
     paybuf = gst_adapter_take_buffer_fast (rtpgstpay->adapter, payload_len);
 
     /* create a new group to hold the rtp header and the payload */
-    gst_buffer_append (outbuf, paybuf);
+    gst_rtp_copy_meta (GST_ELEMENT_CAST (rtpgstpay), outbuf, paybuf, 0);
+    outbuf = gst_buffer_append (outbuf, paybuf);
 
-    GST_BUFFER_TIMESTAMP (outbuf) = timestamp;
+    GST_BUFFER_PTS (outbuf) = timestamp;
 
     /* and add to list */
     gst_buffer_list_insert (list, -1, outbuf);
@@ -483,6 +484,8 @@ gst_rtp_gst_pay_send_event (GstRtpGSTPay * rtpgstpay, guint etype,
 
   estr = gst_structure_to_string (s);
   elen = strlen (estr);
+  /* for 0 byte */
+  elen++;
   outbuf = make_data_buffer (rtpgstpay, estr, elen);
   GST_DEBUG_OBJECT (rtpgstpay, "sending event=%s", estr);
   g_free (estr);
@@ -613,7 +616,7 @@ gst_rtp_gst_pay_handle_buffer (GstRTPBasePayload * basepayload,
 
   rtpgstpay = GST_RTP_GST_PAY (basepayload);
 
-  timestamp = GST_BUFFER_TIMESTAMP (buffer);
+  timestamp = GST_BUFFER_PTS (buffer);
 
   /* check if we need to send the caps and taglist now */
   if (rtpgstpay->config_interval > 0) {

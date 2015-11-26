@@ -144,7 +144,9 @@ GST_END_TEST;
 GST_START_TEST (test_parse_adts_detect_mpeg_version)
 {
   gst_parser_test_output_caps (adts_frame_mpeg2, sizeof (adts_frame_mpeg2),
-      NULL, SINK_CAPS_MPEG2 ", stream-format=(string)adts");
+      NULL,
+      SINK_CAPS_MPEG2
+      ", stream-format=(string)adts, level=(string)2, profile=(string)lc");
 }
 
 GST_END_TEST;
@@ -187,7 +189,7 @@ GST_END_TEST;
 
 GST_START_TEST (test_parse_proxy_constraints)
 {
-  GstCaps *caps;
+  GstCaps *caps, *resultcaps;
   GstElement *parse, *filter;
   GstPad *sinkpad;
   GstStructure *s;
@@ -216,12 +218,16 @@ GST_START_TEST (test_parse_proxy_constraints)
 
   /* should accept without the constraint */
   caps = gst_caps_from_string ("audio/mpeg,mpegversion=2");
-  fail_unless (gst_pad_query_accept_caps (sinkpad, caps));
+  resultcaps = gst_pad_query_caps (sinkpad, caps);
+  fail_if (gst_caps_is_empty (resultcaps));
+  gst_caps_unref (resultcaps);
   gst_caps_unref (caps);
 
   /* should not accept with conflicting version */
   caps = gst_caps_from_string ("audio/mpeg,mpegversion=4");
-  fail_if (gst_pad_query_accept_caps (sinkpad, caps));
+  resultcaps = gst_pad_query_caps (sinkpad, caps);
+  fail_unless (gst_caps_is_empty (resultcaps));
+  gst_caps_unref (resultcaps);
   gst_caps_unref (caps);
 
   gst_object_unref (sinkpad);
@@ -237,6 +243,11 @@ aacparse_suite (void)
 {
   Suite *s = suite_create ("aacparse");
   TCase *tc_chain = tcase_create ("general");
+
+  /* init test context */
+  ctx_factory = "aacparse";
+  ctx_sink_template = &sinktemplate;
+  ctx_src_template = &srctemplate;
 
   suite_add_tcase (s, tc_chain);
   /* ADIF tests */
@@ -265,25 +276,4 @@ aacparse_suite (void)
  *   - Both push- and pull-modes need to be tested
  *      * Pull-mode & EOS
  */
-
-int
-main (int argc, char **argv)
-{
-  int nf;
-
-  Suite *s = aacparse_suite ();
-  SRunner *sr = srunner_create (s);
-
-  gst_check_init (&argc, &argv);
-
-  /* init test context */
-  ctx_factory = "aacparse";
-  ctx_sink_template = &sinktemplate;
-  ctx_src_template = &srctemplate;
-
-  srunner_run_all (sr, CK_NORMAL);
-  nf = srunner_ntests_failed (sr);
-  srunner_free (sr);
-
-  return nf;
-}
+GST_CHECK_MAIN (aacparse);

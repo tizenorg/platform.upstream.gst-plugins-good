@@ -29,7 +29,7 @@
  * <refsect2>
  * <title>Example launch line</title>
  * |[
- * gst-launch-1.0 -v filesrc location=/path/to/file ! decodebin2 ! videoconvert ! deinterlace ! videoconvert ! autovideosink
+ * gst-launch-1.0 -v filesrc location=/path/to/file ! decodebin ! videoconvert ! deinterlace ! videoconvert ! autovideosink
  * ]| This pipeline deinterlaces a video file with the default deinterlacing options.
  * </refsect2>
  */
@@ -75,8 +75,7 @@ enum
   PROP_FIELD_LAYOUT,
   PROP_LOCKING,
   PROP_IGNORE_OBSCURE,
-  PROP_DROP_ORPHANS,
-  PROP_LAST
+  PROP_DROP_ORPHANS
 };
 
 #define GST_DEINTERLACE_BUFFER_STATE_P    (1<<0)
@@ -1501,9 +1500,7 @@ gst_deinterlace_output_frame (GstDeinterlace * self, gboolean flushing)
 
 restart:
   ret = GST_FLOW_OK;
-  fields_required = 0;
   hl_no_lock = FALSE;
-  same_buffer = FALSE;
   flush_one = FALSE;
   self->need_more = FALSE;
   phase = self->pattern_phase;
@@ -1998,11 +1995,10 @@ static gboolean
 gst_deinterlace_get_latency (GstDeinterlace * self)
 {
   if (self->locking == GST_DEINTERLACE_LOCKING_AUTO) {
-    gboolean res;
     GstQuery *query;
 
     query = gst_query_new_latency ();
-    if ((res = gst_pad_peer_query (self->sinkpad, query))) {
+    if ((gst_pad_peer_query (self->sinkpad, query))) {
       gboolean is_live;
       /* if upstream is live, we use low-latency passive locking mode
        * else high-latency active locking mode */
@@ -2138,6 +2134,8 @@ gst_deinterlace_getcaps (GstDeinterlace * self, GstPad * pad, GstCaps * filter)
   gboolean half;
   GstVideoInterlaceMode interlacing_mode;
 
+  gboolean filter_interlaced = FALSE;
+
   otherpad = (pad == self->srcpad) ? self->sinkpad : self->srcpad;
   half = pad != self->srcpad;
 
@@ -2145,9 +2143,27 @@ gst_deinterlace_getcaps (GstDeinterlace * self, GstPad * pad, GstCaps * filter)
   peercaps = gst_pad_peer_query_caps (otherpad, NULL);
 
   interlacing_mode = GST_VIDEO_INFO_INTERLACE_MODE (&self->vinfo);
+  if (interlacing_mode == GST_VIDEO_INTERLACE_MODE_PROGRESSIVE && filter) {
+    guint i, caps_size;
+
+    filter_interlaced = TRUE;
+    caps_size = gst_caps_get_size (filter);
+    for (i = 0; i < caps_size; i++) {
+      const gchar *interlace_mode;
+      GstStructure *structure = gst_caps_get_structure (filter, i);
+
+      interlace_mode = gst_structure_get_string (structure, "interlace-mode");
+
+      if (!interlace_mode || g_strcmp0 (interlace_mode, "progressive") == 0) {
+        filter_interlaced = FALSE;
+      }
+    }
+  }
+
   if (self->mode == GST_DEINTERLACE_MODE_INTERLACED ||
       (self->mode == GST_DEINTERLACE_MODE_AUTO &&
-          interlacing_mode != GST_VIDEO_INTERLACE_MODE_PROGRESSIVE)) {
+          (interlacing_mode != GST_VIDEO_INTERLACE_MODE_PROGRESSIVE ||
+              filter_interlaced))) {
     gst_caps_unref (ourcaps);
     ourcaps = gst_caps_from_string (DEINTERLACE_CAPS);
   }

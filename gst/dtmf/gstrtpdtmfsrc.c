@@ -196,6 +196,7 @@ static gboolean gst_rtp_dtmf_src_unlock_stop (GstBaseSrc * src);
 static GstFlowReturn gst_rtp_dtmf_src_create (GstBaseSrc * basesrc,
     guint64 offset, guint length, GstBuffer ** buffer);
 static gboolean gst_rtp_dtmf_src_negotiate (GstBaseSrc * basesrc);
+static gboolean gst_rtp_dtmf_src_query (GstBaseSrc * basesrc, GstQuery * query);
 
 
 static void
@@ -274,6 +275,7 @@ gst_rtp_dtmf_src_class_init (GstRTPDTMFSrcClass * klass)
   gstbasesrc_class->event = GST_DEBUG_FUNCPTR (gst_rtp_dtmf_src_handle_event);
   gstbasesrc_class->create = GST_DEBUG_FUNCPTR (gst_rtp_dtmf_src_create);
   gstbasesrc_class->negotiate = GST_DEBUG_FUNCPTR (gst_rtp_dtmf_src_negotiate);
+  gstbasesrc_class->query = GST_DEBUG_FUNCPTR (gst_rtp_dtmf_src_query);
 }
 
 static void
@@ -893,9 +895,9 @@ gst_rtp_dtmf_src_negotiate (GstBaseSrc * basesrc)
     gst_caps_set_simple (srccaps,
         "payload", G_TYPE_INT, dtmfsrc->pt,
         "ssrc", G_TYPE_UINT, dtmfsrc->current_ssrc,
-        "clock-base", G_TYPE_UINT, dtmfsrc->ts_base,
+        "timestamp-offset", G_TYPE_UINT, dtmfsrc->ts_base,
         "clock-rate", G_TYPE_INT, dtmfsrc->clock_rate,
-        "seqnum-base", G_TYPE_UINT, dtmfsrc->seqnum_base, NULL);
+        "seqnum-offset", G_TYPE_UINT, dtmfsrc->seqnum_base, NULL);
 
     GST_DEBUG_OBJECT (dtmfsrc, "no peer caps: %" GST_PTR_FORMAT, srccaps);
   } else {
@@ -970,26 +972,28 @@ gst_rtp_dtmf_src_negotiate (GstBaseSrc * basesrc)
           dtmfsrc->current_ssrc);
     }
 
-    if (gst_structure_has_field_typed (s, "clock-base", G_TYPE_UINT)) {
-      value = gst_structure_get_value (s, "clock-base");
+    if (gst_structure_has_field_typed (s, "timestamp-offset", G_TYPE_UINT)) {
+      value = gst_structure_get_value (s, "timestamp-offset");
       dtmfsrc->ts_base = g_value_get_uint (value);
-      GST_LOG_OBJECT (dtmfsrc, "using peer clock-base %u", dtmfsrc->ts_base);
+      GST_LOG_OBJECT (dtmfsrc, "using peer timestamp-offset %u",
+          dtmfsrc->ts_base);
     } else {
       /* FIXME, fixate_nearest_uint would be even better */
-      gst_structure_set (s, "clock-base", G_TYPE_UINT, dtmfsrc->ts_base, NULL);
-      GST_LOG_OBJECT (dtmfsrc, "using internal clock-base %u",
+      gst_structure_set (s, "timestamp-offset", G_TYPE_UINT, dtmfsrc->ts_base,
+          NULL);
+      GST_LOG_OBJECT (dtmfsrc, "using internal timestamp-offset %u",
           dtmfsrc->ts_base);
     }
-    if (gst_structure_has_field_typed (s, "seqnum-base", G_TYPE_UINT)) {
-      value = gst_structure_get_value (s, "seqnum-base");
+    if (gst_structure_has_field_typed (s, "seqnum-offset", G_TYPE_UINT)) {
+      value = gst_structure_get_value (s, "seqnum-offset");
       dtmfsrc->seqnum_base = g_value_get_uint (value);
-      GST_LOG_OBJECT (dtmfsrc, "using peer seqnum-base %u",
+      GST_LOG_OBJECT (dtmfsrc, "using peer seqnum-offset %u",
           dtmfsrc->seqnum_base);
     } else {
       /* FIXME, fixate_nearest_uint would be even better */
-      gst_structure_set (s, "seqnum-base", G_TYPE_UINT, dtmfsrc->seqnum_base,
+      gst_structure_set (s, "seqnum-offset", G_TYPE_UINT, dtmfsrc->seqnum_base,
           NULL);
-      GST_LOG_OBJECT (dtmfsrc, "using internal seqnum-base %u",
+      GST_LOG_OBJECT (dtmfsrc, "using internal seqnum-offset %u",
           dtmfsrc->seqnum_base);
     }
 
@@ -1021,6 +1025,33 @@ gst_rtp_dtmf_src_negotiate (GstBaseSrc * basesrc)
 
 }
 
+static gboolean
+gst_rtp_dtmf_src_query (GstBaseSrc * basesrc, GstQuery * query)
+{
+  GstRTPDTMFSrc *dtmfsrc = GST_RTP_DTMF_SRC (basesrc);
+  gboolean res = FALSE;
+
+  switch (GST_QUERY_TYPE (query)) {
+    case GST_QUERY_LATENCY:
+    {
+      GstClockTime latency;
+
+      latency = dtmfsrc->ptime * GST_MSECOND;
+      gst_query_set_latency (query, gst_base_src_is_live (basesrc), latency,
+          GST_CLOCK_TIME_NONE);
+      GST_DEBUG_OBJECT (dtmfsrc, "Reporting latency of %" GST_TIME_FORMAT,
+          GST_TIME_ARGS (latency));
+      res = TRUE;
+    }
+      break;
+    default:
+      res = GST_BASE_SRC_CLASS (gst_rtp_dtmf_src_parent_class)->query (basesrc,
+          query);
+      break;
+  }
+
+  return res;
+}
 
 static void
 gst_rtp_dtmf_src_ready_to_paused (GstRTPDTMFSrc * dtmfsrc)
