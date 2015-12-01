@@ -1,4 +1,4 @@
-#%bcond_with x
+%bcond_with x
 %define gst_branch 1.0
 
 Name:           gst-plugins-good
