@@ -12,8 +12,9 @@ Source:         http://gstreamer.freedesktop.org/src/gst-plugins-good/gst-plugin
 Source100:      common.tar.gz
 BuildRequires:  gcc-c++
 BuildRequires:  gettext-tools
-BuildRequires:  glib2-devel >= 2.31.14
-BuildRequires:  gstreamer-devel >= 1.0.0
+BuildRequires:  pkgconfig(glib-2.0) >= 2.32
+BuildRequires:  pkgconfig(gstreamer-1.0)
+BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0)
 BuildRequires:  libjpeg-devel
 BuildRequires:  orc >= 0.4.16
 BuildRequires:  python
@@ -23,7 +24,6 @@ BuildRequires:  pkgconfig(cairo) >= 1.0.0
 BuildRequires:  pkgconfig(cairo-gobject) >= 1.10.0
 BuildRequires:  pkgconfig(flac)
 BuildRequires:  pkgconfig(gdk-pixbuf-2.0) >= 2.8.0
-BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0) >= 1.0.2
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
 BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
