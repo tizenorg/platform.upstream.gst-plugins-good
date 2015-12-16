@@ -534,6 +534,11 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
   glob_t glob_buf;
 
   memset(&glob_buf, 0x0, sizeof(glob_t));
+
+  if (!v4l2object) {
+    GST_ERROR("v4l2object is NULL");
+    return FALSE;
+  }
 #endif /* GST_EXT_V4L2SRC_MODIFIED */
 
   GST_DEBUG_OBJECT (v4l2object->element, "Trying to open device %s",
@@ -547,6 +552,11 @@ gst_v4l2_open (GstV4l2Object * v4l2object)
     v4l2object->videodev = g_strdup ("/dev/video");
 
 #ifdef GST_EXT_V4L2SRC_MODIFIED
+  if (!v4l2object->videodev) {
+    GST_ERROR_OBJECT(v4l2object->element, "videodev is NULL");
+    return FALSE;
+  }
+
 CHECK_AGAIN:
 #endif /* GST_EXT_V4L2SRC_MODIFIED */
   /* check if it is a device */
@@ -692,6 +702,7 @@ pre_error_check:
     if (glob_buf.gl_pathc > 0 && device_index < glob_buf.gl_pathc) {
       if (v4l2object->videodev) {
         g_free(v4l2object->videodev);
+        v4l2object->videodev = NULL;
       }
       v4l2object->videodev = g_strdup(glob_buf.gl_pathv[device_index]);
       if (v4l2object->videodev) {
