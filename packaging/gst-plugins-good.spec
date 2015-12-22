@@ -23,7 +23,6 @@ BuildRequires:  pkgconfig(bzip2)
 BuildRequires:  pkgconfig(cairo) >= 1.0.0
 BuildRequires:  pkgconfig(cairo-gobject) >= 1.10.0
 BuildRequires:  pkgconfig(flac)
-BuildRequires:  pkgconfig(gdk-pixbuf-2.0) >= 2.8.0
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
 BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
@@ -116,7 +115,6 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstVP8Enc.prs
 %{_libdir}/gstreamer-%{gst_branch}/libgstflv.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstflxdec.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstgdkpixbuf.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstgoom.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstgoom2k1.so
 %{_libdir}/gstreamer-%{gst_branch}/libgsticydemux.so
