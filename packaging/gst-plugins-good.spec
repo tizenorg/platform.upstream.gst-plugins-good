@@ -81,6 +81,14 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED"
 	--with-libv4l2 \
 	--disable-gtk-doc\
 	--with-gtk=3.0\
+	--disable-monoscope\
+	--disable-y4m\
+	--disable-cairo\
+	--disable-flac\
+	--disable-speex\
+	--disable-taglib\
+	--disable-vpx\
+	--disable-wavpack\
 	--enable-experimental
 make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 
@@ -112,7 +120,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
-%{_datadir}/gstreamer-%{gst_branch}/presets/GstVP8Enc.prs
+#%{_datadir}/gstreamer-%{gst_branch}/presets/GstVP8Enc.prs
 %{_libdir}/gstreamer-%{gst_branch}/libgstflv.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstflxdec.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstgoom.so
@@ -125,7 +133,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstjpeg.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstlevel.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmatroska.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstmonoscope.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstmonoscope.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmulaw.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmultifile.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmultipart.so
@@ -141,7 +149,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstshapewipe.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstsmpte.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstspectrum.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstspeex.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstspeex.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstudp.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideo4linux2.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideobox.so
@@ -153,11 +161,11 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %if %{with x}
 %{_libdir}/gstreamer-%{gst_branch}/libgstximagesrc.so
 %endif
-%{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgsty4menc.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstcairo.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstsouphttpsrc.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstflac.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstvpx.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstflac.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstvpx.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstdtmf.so
 
 
