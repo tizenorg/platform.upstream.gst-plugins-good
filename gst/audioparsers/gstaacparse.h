@@ -79,6 +79,20 @@ struct _GstAacParse {
   gint           mpegversion;
   gint           frame_samples;
 
+#ifdef GST_EXT_AACPARSE_MODIFICATION
+  gboolean       first_frame; /* estimate duration once at the first time */
+  guint          hdr_bitrate;      /* estimated bitrate (bps) */
+  guint          spf;                      /* samples per frame = frame_samples */
+  guint          frame_duration; /* duration per frame (msec) */
+  guint          frame_per_sec; /* frames per second (ea) */
+  guint          bitstream_type; /* bitstream type - constant or variable */
+  guint          adif_header_length;
+  guint          num_program_config_elements;
+  guint          read_bytes;
+  gint64         file_size;
+  guint          frame_byte;
+#endif
+
   GstAacHeaderType header_type;
   GstAacHeaderType output_header_type;
 
