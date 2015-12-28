@@ -1375,6 +1375,9 @@ gst_wavparse_stream_headers (GstWavParse * wav)
         const gst_riff_acid *acid = NULL;
         const guint data_size = sizeof (gst_riff_acid);
         gfloat tempo;
+#ifdef GST_EXT_WAVPARSE_MODIFICATION
+        const guint8 *data = NULL;
+#endif
 
         GST_INFO_OBJECT (wav, "Have acid chunk");
         if (size < data_size) {
@@ -1391,9 +1394,17 @@ gst_wavparse_stream_headers (GstWavParse * wav)
             goto exit;
           }
           gst_adapter_flush (wav->adapter, 8);
+#ifdef GST_EXT_WAVPARSE_MODIFICATION
+          if (gst_adapter_available (wav->adapter) < 24) {
+            goto exit;
+          }
+          data = gst_adapter_map (wav->adapter, 24);
+          tempo = GST_READ_FLOAT_LE (data + 20);
+#else
           acid = (const gst_riff_acid *) gst_adapter_map (wav->adapter,
               data_size);
           tempo = acid->tempo;
+#endif
           gst_adapter_unmap (wav->adapter);
         } else {
           GstMapInfo map;
