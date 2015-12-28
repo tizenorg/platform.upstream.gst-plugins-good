@@ -71,6 +71,17 @@ GST_DEBUG_CATEGORY_STATIC (mpeg_audio_parse_debug);
 
 #define MIN_FRAME_SIZE       6
 
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+#define DEFAULT_CHECK_HTTP_SEEK FALSE
+
+/* Property */
+enum
+{
+  PROP_0,
+  PROP_CHECK_HTTP_SEEK
+};
+#endif
+
 static GstStaticPadTemplate src_template = GST_STATIC_PAD_TEMPLATE ("src",
     GST_PAD_SRC,
     GST_PAD_ALWAYS,
@@ -92,6 +103,15 @@ static void gst_mpeg_audio_parse_finalize (GObject * object);
 
 static gboolean gst_mpeg_audio_parse_start (GstBaseParse * parse);
 static gboolean gst_mpeg_audio_parse_stop (GstBaseParse * parse);
+
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+static void gst_mpeg_audio_parse_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+static void gst_mpeg_audio_parse_get_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec);
+static gboolean gst_mpeg_audio_parse_src_eventfunc (GstBaseParse * parse, GstEvent * event);
+#endif
+
 static GstFlowReturn gst_mpeg_audio_parse_handle_frame (GstBaseParse * parse,
     GstBaseParseFrame * frame, gint * skipsize);
 static GstFlowReturn gst_mpeg_audio_parse_pre_push_frame (GstBaseParse * parse,
@@ -165,6 +185,22 @@ gst_mpeg_audio_parse_class_init (GstMpegAudioParseClass * klass)
   parse_class->convert = GST_DEBUG_FUNCPTR (gst_mpeg_audio_parse_convert);
   parse_class->get_sink_caps =
       GST_DEBUG_FUNCPTR (gst_mpeg_audio_parse_get_sink_caps);
+
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+  object_class->set_property = gst_mpeg_audio_parse_set_property;
+  object_class->get_property = gst_mpeg_audio_parse_get_property;
+
+  g_object_class_install_property (object_class, PROP_CHECK_HTTP_SEEK,
+         g_param_spec_boolean ("http-pull-mp3dec", "enable/disable",
+        "enable/disable mp3dec http seek pull mode",
+        DEFAULT_CHECK_HTTP_SEEK,
+        G_PARAM_READWRITE | G_PARAM_STATIC_STRINGS));
+  /* T.B.D : make full mp3 index table when seek */
+  parse_class->src_event = gst_mpeg_audio_parse_src_eventfunc;
+#endif
+
+
+
 
   /* register tags */
 #define GST_TAG_CRC      "has-crc"
@@ -246,8 +282,52 @@ gst_mpeg_audio_parse_start (GstBaseParse * parse)
 
   gst_mpeg_audio_parse_reset (mp3parse);
 
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+  if (mp3parse->http_seek_flag) {
+    /* Don't need Accurate Seek table (in http pull mode) */
+    GST_INFO_OBJECT (parse, "Enable (1) : mp3parse->http_seek_flag");
+  } else {
+    GST_INFO_OBJECT (parse, "Disable (0) : mp3parse->http_seek_flag");
+  }
+#endif
+
   return TRUE;
 }
+
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+gst_mpeg_audio_parse_set_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstMpegAudioParse *mp3parse = GST_MPEG_AUDIO_PARSE (object);
+  GST_INFO_OBJECT (mp3parse, "set_property() START- prop_id(%d)",prop_id);
+  switch (prop_id) {
+    case PROP_CHECK_HTTP_SEEK:
+      mp3parse->http_seek_flag = g_value_get_boolean (value);
+      GST_INFO_OBJECT (mp3parse, "http_seek_flag(%d)", mp3parse->http_seek_flag);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+
+static void
+gst_mpeg_audio_parse_get_property (GObject * object, guint prop_id,
+    const GValue * value, GParamSpec * pspec)
+{
+  GstMpegAudioParse *mp3parse = GST_MPEG_AUDIO_PARSE (object);
+  GST_INFO_OBJECT (mp3parse, "get_property() START- prop_id(%d)",prop_id);
+  switch (prop_id) {
+    case PROP_CHECK_HTTP_SEEK:
+      g_value_set_boolean (value, mp3parse->http_seek_flag);
+      GST_INFO_OBJECT (mp3parse, "http_seek_flag(%d)", mp3parse->http_seek_flag);
+      break;
+    default:
+      G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
+      break;
+  }
+}
+#endif
 
 static gboolean
 gst_mpeg_audio_parse_stop (GstBaseParse * parse)
@@ -1441,3 +1521,48 @@ gst_mpeg_audio_parse_get_sink_caps (GstBaseParse * parse, GstCaps * filter)
 
   return res;
 }
+
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+/**
+ * gst_mpeg_audio_parse_src_eventfunc:
+ * @parse: #GstBaseParse. #event
+ *
+ * before baseparse handles seek event, check any mode and flag.
+ *
+ * Returns: TRUE on success.
+ */
+static gboolean
+gst_mpeg_audio_parse_src_eventfunc (GstBaseParse * parse, GstEvent * event)
+{
+  gboolean handled = FALSE;
+  GstMpegAudioParse *mp3parse;
+  mp3parse = GST_MPEG_AUDIO_PARSE (parse);
+
+  GST_DEBUG_OBJECT (parse, "handling event %d, %s", GST_EVENT_TYPE (event),
+      GST_EVENT_TYPE_NAME (event));
+
+  switch (GST_EVENT_TYPE (event)) {
+    case GST_EVENT_SEEK:
+    {
+      GST_INFO_OBJECT (mp3parse, "GST_EVENT_SEEK enter");
+      if (mp3parse->http_seek_flag) {
+        GST_INFO_OBJECT (mp3parse, "souphttpsrc is PULL MODE (so accurate seek mode is OFF)");
+        /* Check the declaration of this function in the baseparse */
+        gst_base_parse_set_seek_mode(parse, 0);
+        goto mp3_seek_null_exit;
+      }
+      GST_INFO_OBJECT (mp3parse, "GST_EVENT_SEEK leave");
+      break;
+    }
+    default:
+      break;
+  }
+
+mp3_seek_null_exit:
+  /* call baseparse src_event function to handle event */
+  handled = GST_BASE_PARSE_CLASS (parent_class)->src_event (parse, event);
+
+  return handled;
+}
+#endif
+

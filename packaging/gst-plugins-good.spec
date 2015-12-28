@@ -74,7 +74,8 @@ This package provides complementary plugins for
 export V=1
 NOCONFIGURE=1 ./autogen.sh
 export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
-		-DGST_EXT_WAVPARSE_MODIFICATION"
+		-DGST_EXT_WAVPARSE_MODIFICATION\
+		-DGST_EXT_MP3PARSE_MODIFICATION"
 %configure\
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\

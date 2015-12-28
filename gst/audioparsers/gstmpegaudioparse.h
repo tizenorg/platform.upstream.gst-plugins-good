@@ -94,6 +94,10 @@ struct _GstMpegAudioParse {
   /* LAME info */
   guint32      encoder_delay;
   guint32      encoder_padding;
+#ifdef GST_EXT_MP3PARSE_MODIFICATION
+  /* Additional info */
+  gboolean     http_seek_flag;
+#endif
 };
 
 /**
