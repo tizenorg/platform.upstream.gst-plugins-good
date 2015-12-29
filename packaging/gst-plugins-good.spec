@@ -84,7 +84,8 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 	--with-libv4l2 \
 	--disable-gtk-doc\
 	--with-gtk=3.0\
-	--enable-experimental
+	--enable-experimental\
+	--disable-effectv
 make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 
 %install
@@ -111,7 +112,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstdebug.so
 # Not yet ported
 %{_libdir}/gstreamer-%{gst_branch}/libgstdeinterlace.so
-%{_libdir}/gstreamer-%{gst_branch}/libgsteffectv.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgsteffectv.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
