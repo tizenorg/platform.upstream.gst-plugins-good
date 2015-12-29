@@ -90,7 +90,8 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 	--disable-taglib\
 	--disable-vpx\
 	--disable-wavpack\
-	--enable-experimental
+	--enable-experimental\
+	--disable-effectv
 make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 
 %install
