@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.6.1
-Release:        2
+Release:        3
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -41,7 +41,6 @@ BuildRequires:  pkgconfig(xv)
 %endif
 
 BuildRequires:  pkgconfig(zlib)
-BuildRequires:  pkgconfig(libv4l2)
 BuildRequires:  pkgconfig(vconf)
 Requires:       gst-plugins-base >= 1.0.0
 Requires:       gstreamer >= 1.0.5
@@ -81,7 +80,6 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\
 %endif
-	--with-libv4l2 \
 	--disable-gtk-doc\
 	--with-gtk=3.0\
 	--disable-monoscope\
