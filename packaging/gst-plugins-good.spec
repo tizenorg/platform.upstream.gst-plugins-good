@@ -22,7 +22,6 @@ BuildRequires:  xsltproc
 BuildRequires:  pkgconfig(bzip2)
 BuildRequires:  pkgconfig(cairo) >= 1.0.0
 BuildRequires:  pkgconfig(cairo-gobject) >= 1.10.0
-BuildRequires:  pkgconfig(flac)
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
 BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
@@ -85,7 +84,6 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 	--disable-monoscope\
 	--disable-y4m\
 	--disable-cairo\
-	--disable-flac\
 	--disable-speex\
 	--disable-taglib\
 	--disable-vpx\
