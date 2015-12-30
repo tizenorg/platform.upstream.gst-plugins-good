@@ -118,7 +118,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstdebug.so
 # Not yet ported
 %{_libdir}/gstreamer-%{gst_branch}/libgstdeinterlace.so
-%{_libdir}/gstreamer-%{gst_branch}/libgsteffectv.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgsteffectv.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
 %{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
