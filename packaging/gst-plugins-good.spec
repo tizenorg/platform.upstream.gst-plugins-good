@@ -20,16 +20,11 @@ BuildRequires:  orc >= 0.4.16
 BuildRequires:  python
 BuildRequires:  xsltproc
 BuildRequires:  pkgconfig(bzip2)
-BuildRequires:  pkgconfig(cairo) >= 1.0.0
-BuildRequires:  pkgconfig(cairo-gobject) >= 1.10.0
-BuildRequires:  pkgconfig(flac)
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
 BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(libxml-2.0) >= 2.4.9
-BuildRequires:  pkgconfig(speex) >= 1.1.6
-BuildRequires:  pkgconfig(vpx) >= 1.1.0
 # TODO find where process.h comes from, not kernel-devel and not wxWidgets so far.
 %if %{with x}
 BuildRequires:  pkgconfig(ice)
@@ -84,11 +79,7 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 	--with-gtk=3.0\
 	--disable-monoscope\
 	--disable-y4m\
-	--disable-cairo\
-	--disable-flac\
-	--disable-speex\
 	--disable-taglib\
-	--disable-vpx\
 	--disable-wavpack\
 	--enable-experimental\
 	--disable-effectv
