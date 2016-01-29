@@ -21,7 +21,7 @@ BuildRequires:  python
 BuildRequires:  xsltproc
 BuildRequires:  pkgconfig(bzip2)
 BuildRequires:  pkgconfig(gudev-1.0) >= 143
-BuildRequires:  pkgconfig(libpng) >= 1.2
+#BuildRequires:  pkgconfig(libpng) >= 1.2
 BuildRequires:  pkgconfig(libpulse) >= 1.0
 BuildRequires:  pkgconfig(libsoup-2.4)
 BuildRequires:  pkgconfig(libxml-2.0) >= 2.4.9
@@ -133,7 +133,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstnavigationtest.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstoss4audio.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstossaudio.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstpng.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstpng.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstpulse.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstreplaygain.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstrtp.so
