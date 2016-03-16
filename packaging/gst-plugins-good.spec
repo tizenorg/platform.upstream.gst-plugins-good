@@ -15,7 +15,7 @@ BuildRequires:  gettext-tools
 BuildRequires:  pkgconfig(glib-2.0) >= 2.32
 BuildRequires:  pkgconfig(gstreamer-1.0)
 BuildRequires:  pkgconfig(gstreamer-plugins-base-1.0)
-#BuildRequires:  libjpeg-devel
+BuildRequires:  libjpeg-devel
 BuildRequires:  orc >= 0.4.16
 BuildRequires:  python
 BuildRequires:  xsltproc
@@ -123,7 +123,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstimagefreeze.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstinterleave.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstisomp4.so
-#%{_libdir}/gstreamer-%{gst_branch}/libgstjpeg.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstjpeg.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstlevel.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmatroska.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstmonoscope.so
