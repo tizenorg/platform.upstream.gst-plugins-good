@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.6.1
-Release:        3
+Release:        4
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -82,6 +82,9 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 	--disable-taglib\
 	--disable-wavpack\
 	--enable-experimental\
+%ifarch %arm armv7l aarch64
+	--disable-gst_v4l2\
+%endif
 	--disable-effectv
 make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 
@@ -144,7 +147,11 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstspectrum.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstspeex.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstudp.so
+%ifarch %arm armv7l aarch64
+%exclude %{_libdir}/gstreamer-%{gst_branch}/libgstvideo4linux2.so
+%else
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideo4linux2.so
+%endif
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideobox.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideocrop.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideofilter.so
