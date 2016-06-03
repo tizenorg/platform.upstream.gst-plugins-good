@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.6.1
-Release:        6
+Release:        7
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -87,7 +87,32 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 %if "%_repository" == "target-circle"
 	--disable-gst_v4l2\
 %endif
-	--disable-effectv
+%if "%{?profile}" == "tv"
+	--disable-equalizer\
+	--disable-flv\
+	--disable-videobox\
+	--disable-videomixer\
+%endif
+	--disable-effectv\
+	--disable-alpha\
+	--disable-auparse\
+	--disable-effectv\
+	--disable-flx\
+	--disable-goom\
+	--disable-goom2k1\
+	--disable-level\
+	--disable-multipart\
+	--disable-replaygain\
+	--disable-smpte\
+	--disable-spectrum\
+	--disable-cutter\
+	--disable-dtmf\
+	--disable-imagefreeze\
+	--disable-multifile\
+	--disable-oss4\
+	--disable-oss\
+	--disable-shapewipe
+
 make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 
 %install
@@ -101,61 +126,66 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %defattr(-, root, root)
 %license COPYING
 %{_libdir}/gstreamer-%{gst_branch}/libgstalaw.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstalpha.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstalphacolor.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstalpha.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstalphacolor.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstapetag.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstaudiofx.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstaudioparsers.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstauparse.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstauparse.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstautodetect.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstavi.so
 # Not yet ported
-%{_libdir}/gstreamer-%{gst_branch}/libgstcutter.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstcutter.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstdebug.so
 # Not yet ported
 %{_libdir}/gstreamer-%{gst_branch}/libgstdeinterlace.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgsteffectv.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
-%{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
-%{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
+
 #%{_datadir}/gstreamer-%{gst_branch}/presets/GstVP8Enc.prs
-%{_libdir}/gstreamer-%{gst_branch}/libgstflv.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstflxdec.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstgoom.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstgoom2k1.so
+
+#%{_libdir}/gstreamer-%{gst_branch}/libgstflxdec.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstgoom.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstgoom2k1.so
 %{_libdir}/gstreamer-%{gst_branch}/libgsticydemux.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstid3demux.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstimagefreeze.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstimagefreeze.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstinterleave.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstisomp4.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstjpeg.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstlevel.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstlevel.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmatroska.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstmonoscope.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmulaw.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstmultifile.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstmultipart.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstmultifile.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstmultipart.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstnavigationtest.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstoss4audio.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstossaudio.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstoss4audio.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstossaudio.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstpng.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstpulse.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstreplaygain.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstreplaygain.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstrtp.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstrtpmanager.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstrtsp.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstshapewipe.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstsmpte.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstspectrum.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstshapewipe.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstsmpte.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstspectrum.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstspeex.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstudp.so
 %if "%_repository" != "target-circle"
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideo4linux2.so
 %endif
-%{_libdir}/gstreamer-%{gst_branch}/libgstvideobox.so
+
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideocrop.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideofilter.so
+%if "%{?profile}" != "tv"
+%{_libdir}/gstreamer-%{gst_branch}/libgstflv.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstequalizer.so
+%{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer10Bands.prs
+%{_datadir}/gstreamer-%{gst_branch}/presets/GstIirEqualizer3Bands.prs
+%{_libdir}/gstreamer-%{gst_branch}/libgstvideobox.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstvideomixer.so
+%endif
 %{_libdir}/gstreamer-%{gst_branch}/libgstwavenc.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstwavparse.so
 %if %{with x}
@@ -166,7 +196,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstsouphttpsrc.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstflac.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstvpx.so
-%{_libdir}/gstreamer-%{gst_branch}/libgstdtmf.so
+#%{_libdir}/gstreamer-%{gst_branch}/libgstdtmf.so
 
 
 %if 0%{?ENABLE_AALIB}
