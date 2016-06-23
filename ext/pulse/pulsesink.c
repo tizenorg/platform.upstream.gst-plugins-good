@@ -219,6 +219,10 @@ static void gst_pulseringbuffer_clear (GstAudioRingBuffer * buf);
 static guint gst_pulseringbuffer_commit (GstAudioRingBuffer * buf,
     guint64 * sample, guchar * data, gint in_samples, gint out_samples,
     gint * accum);
+#ifdef __TIZEN__
+static gboolean gst_pulsering_set_corked (GstPulseRingBuffer * pbuf, gboolean corked,
+    gboolean wait);
+#endif
 
 G_DEFINE_TYPE (GstPulseRingBuffer, gst_pulseringbuffer,
     GST_TYPE_AUDIO_RING_BUFFER);
@@ -866,6 +870,11 @@ gst_pulsering_stream_event_cb (pa_stream * p, const char *name,
       GST_ELEMENT_ERROR (psink, STREAM, FORMAT, ("Sink format changed"),
           ("Sink format changed"));
     }
+#ifdef __TIZEN__
+  } else if (!strcmp (name, PA_STREAM_EVENT_POP_TIMEOUT)) {
+    GST_WARNING_OBJECT (psink, "got event [%s], cork stream now!!!!", name);
+    gst_pulsering_set_corked (pbuf, TRUE, FALSE);
+#endif
   } else {
     GST_DEBUG_OBJECT (psink, "got unknown event %s", name);
   }
