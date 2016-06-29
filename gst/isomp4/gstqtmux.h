@@ -261,6 +261,12 @@ struct _GstQTMux
 
   /* for request pad naming */
   guint video_pads, audio_pads, subtitle_pads;
+
+#ifdef GST_TIZEN_MODIFICATION
+  guint expected_trailer_size;
+  guint audio_expected_trailer_size;
+  guint video_expected_trailer_size;
+#endif /* GST_TIZEN_MODIFICATION */
 };
 
 struct _GstQTMuxClass
