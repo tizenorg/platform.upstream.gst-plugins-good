@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.6.1
-Release:        7
+Release:        8
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -71,7 +71,8 @@ NOCONFIGURE=1 ./autogen.sh
 export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 		-DGST_EXT_WAVPARSE_MODIFICATION\
 		-DGST_EXT_MP3PARSE_MODIFICATION\
-		-DGST_EXT_AACPARSE_MODIFICATION"
+		-DGST_EXT_AACPARSE_MODIFICATION\
+		-DTIZEN_FEATURE_GST_MUX_ENHANCEMENT"
 %configure\
 %if ! 0%{?ENABLE_AALIB}
 	--disable-aalib\

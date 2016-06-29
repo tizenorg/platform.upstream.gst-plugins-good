@@ -267,6 +267,9 @@ enum
   PROP_DTS_METHOD,
 #endif
   PROP_DO_CTTS,
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+  PROP_EXPECTED_TRAILER_SIZE,
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
 };
 
 /* some spare for header size as well */
@@ -316,6 +319,228 @@ static GstFlowReturn
 gst_qt_mux_robust_recording_rewrite_moov (GstQTMux * qtmux);
 
 static GstElementClass *parent_class = NULL;
+
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+/*
+     [[ Metadata Size ]]
+     1. Common
+       free = 8
+       moov = 8
+         mvhd = 108
+       -------------
+       total : 124
+
+     2. Video
+       i. Video common
+         trak = 8
+           tkhd = 92
+           mdia = 8
+             mdhd = 32
+             hdlr = 45
+             minf = 8
+               vmhd = 20
+               dinf = 36 (8, dref : 16 , url : 12)
+               stbl = 8
+         ---------------
+         total : 257
+
+       ii. Variation in file format
+         - MP4
+             ftyp = 32
+             udta = 61
+         - 3GP
+             ftyp = 28
+             udta = 8
+
+       iii. Variation in codec
+         - MPEG4
+           stsd = 137(16, mp4v : 86, esds : 35)
+
+         - H.264 = 487(or 489) + (8*stts_count) + (8*frame) + (4*I-frame)
+           stsd = 134 (SPS 9, PPS 4) or 136 (SPS 111, PPS 4)
+
+         - H.263 = 470 + + (8*stts_count) + (8*frame) + (4*I-frame)
+           stsd = 102 -> different from H.264
+
+       iv. Variation in frame
+         stts = 16 + (8*stts_count)
+         stss = 16 + (4*I-frame)
+         stsc = 28
+         stsz = 20 + (4*frame)
+         stco = 16 + (4*frame)
+
+     3. Audio
+       i. Audio common
+         trak = 8
+           tkhd = 92
+           mdia = 8
+             mdhd = 32
+             hdlr = 45
+             minf = 8
+               smhd = 16
+               dinf = 36 (8, dref : 16, url : 12)
+               stbl = 8
+         ---------------
+         total : 253
+
+       ii. Variation in file format
+         - MP4
+             udta = 61
+         - 3GP
+             udta = 8
+
+       iii. Variation in codec
+         - AAC = 424 + + (8*stts_count) + (8*audio_frame)
+             stsd = 94 (16, mp4a : 78(36 ,esds : 42))
+             stts = 16 + (8*stts_count)
+             stsc = 28
+             stsz = 20 + (4*frame)
+             stco = 16 + (4*frame)
+
+         - AMR = 410 + (4*audio_frame)
+             stsd = 69 -> different from AAC
+             stts = 24 -> different from AAC
+             stsc = 28
+             stsz = 20 -> different from AAC
+             stco = 16 + (4*frame)
+*/
+
+/* trailer entry size */
+#define ENTRY_SIZE_VIDEO_STTS         8
+#define ENTRY_SIZE_VIDEO_STSS         4
+#define ENTRY_SIZE_VIDEO_STSZ         4
+#define ENTRY_SIZE_VIDEO_STCO         4
+#define ENTRY_SIZE_AUDIO_STTS         8
+#define ENTRY_SIZE_AUDIO_STSZ         4
+#define ENTRY_SIZE_AUDIO_STCO         4
+
+#define ENTRY_SIZE_VIDEO_MPEG4_STSD   137
+#define ENTRY_SIZE_VIDEO_H263P_STSD   102
+#define ENTRY_SIZE_AUDIO_AAC_STSD     94
+#define ENTRY_SIZE_AUDIO_AMR_STSD     69
+
+#define ENTRY_SIZE_STSC               28
+#define ENTRY_SIZE_VIDEO_ST           68        /*atom size (stss + stts + stsc + stsz + stco ) * (size + atom + version + flags + sample count)+stsz(sample size) */
+#define ENTRY_SIZE_AUDIO_ST           52        /*atom size (stss + stsc + stsz + stco ) * (size + atom + version + flags + sample count)+stsz(sample size) */
+
+/* common */
+#define MUX_COMMON_SIZE_HEADER             124   /* free + moov + moov.mvhd*/
+
+#define MUX_COMMON_SIZE_VIDEO_HEADER       257
+#define MUX_COMMON_SIZE_AUDIO_HEADER       253
+
+#define MUX_COMMON_SIZE_MP4_FTYP           32
+#define MUX_COMMON_SIZE_3GP_FTYP           28
+
+#define MUX_COMMON_SIZE_MP4_UDTA           61
+#define MUX_COMMON_SIZE_3GP_UDTA           8
+
+static void
+gst_qt_mux_update_expected_trailer_size (GstQTMux *qtmux, GstQTPad *pad)
+{
+  guint nb_video_frames = 0;
+  guint nb_video_i_frames = 0;
+  guint nb_video_stts_entry = 0;
+  guint nb_audio_frames = 0;
+  guint nb_audio_stts_entry = 0;
+  gboolean video_stream = FALSE;
+  gboolean audio_stream = FALSE;
+  guint exp_size = 0;
+  GstQTMuxClass *qtmux_klass = (GstQTMuxClass *)(G_OBJECT_GET_CLASS(qtmux));
+
+  if (qtmux == NULL || pad == NULL) {
+    GST_ERROR_OBJECT (qtmux, "Invalid parameter");
+    return;
+  }
+
+  if (!strncmp(GST_PAD_NAME(pad->collect.pad), "video", 5)) {
+    nb_video_frames += pad->trak->mdia.minf.stbl.stsz.table_size;
+    nb_video_i_frames += pad->trak->mdia.minf.stbl.stss.entries.len;
+    nb_video_stts_entry += pad->trak->mdia.minf.stbl.stts.entries.len;
+
+    video_stream = TRUE;
+  } else if (!strncmp(GST_PAD_NAME(pad->collect.pad), "audio", 5)) {
+    nb_audio_frames += pad->trak->mdia.minf.stbl.stsz.table_size;
+    nb_audio_stts_entry += pad->trak->mdia.minf.stbl.stts.entries.len;
+
+    audio_stream = TRUE;
+  }
+
+  /* free + moov + mvhd */
+  qtmux->expected_trailer_size = MUX_COMMON_SIZE_HEADER;
+
+  /* ftyp + udta * 3 (There is 3 udta fields and it's same size) */
+  switch (qtmux_klass->format) {
+  case GST_QT_MUX_FORMAT_MP4:
+    qtmux->expected_trailer_size += MUX_COMMON_SIZE_MP4_FTYP + MUX_COMMON_SIZE_MP4_UDTA * 3;
+    break;
+  case GST_QT_MUX_FORMAT_3GP:
+    qtmux->expected_trailer_size += MUX_COMMON_SIZE_3GP_FTYP + MUX_COMMON_SIZE_3GP_UDTA * 3;
+    break;
+  default:
+    break;
+  }
+
+  /* Calculate trailer size for video stream */
+  if (video_stream) {
+    switch (pad->fourcc) {
+    case FOURCC_h263:
+    case FOURCC_s263:
+      exp_size += MUX_COMMON_SIZE_VIDEO_HEADER + ENTRY_SIZE_VIDEO_H263P_STSD;
+      break;
+    case FOURCC_mp4v:
+    case FOURCC_MP4V:
+    case FOURCC_fmp4:
+    case FOURCC_FMP4:
+    case FOURCC_3gp4:
+    case FOURCC_3gp6:
+    case FOURCC_3gg6:
+      exp_size += MUX_COMMON_SIZE_VIDEO_HEADER + ENTRY_SIZE_VIDEO_MPEG4_STSD;
+      break;
+    default:
+      break;
+    }
+
+    /* frame related */
+    exp_size += ENTRY_SIZE_VIDEO_ST + (ENTRY_SIZE_VIDEO_STTS * nb_video_stts_entry) +
+                (ENTRY_SIZE_VIDEO_STSS * nb_video_i_frames) + (ENTRY_SIZE_STSC) +
+                ((ENTRY_SIZE_VIDEO_STSZ + ENTRY_SIZE_VIDEO_STCO) * nb_video_frames);
+
+    qtmux->video_expected_trailer_size = exp_size;
+  }
+
+  /* Calculate trailer size for audio stream */
+  if (audio_stream) {
+    switch (pad->fourcc) {
+    case FOURCC_samr:
+      /* AMR_NB codec */
+      exp_size += MUX_COMMON_SIZE_AUDIO_HEADER + ENTRY_SIZE_AUDIO_AMR_STSD +
+                  ENTRY_SIZE_AUDIO_ST + (ENTRY_SIZE_AUDIO_STTS * nb_audio_stts_entry) +
+                  (ENTRY_SIZE_STSC) + (ENTRY_SIZE_AUDIO_STCO * nb_audio_frames);
+      break;
+    default:
+      /* AAC codec */
+      exp_size += MUX_COMMON_SIZE_AUDIO_HEADER + ENTRY_SIZE_AUDIO_AAC_STSD +
+                  ENTRY_SIZE_AUDIO_ST + (ENTRY_SIZE_AUDIO_STTS * nb_audio_stts_entry) +
+                  (ENTRY_SIZE_STSC) + ((ENTRY_SIZE_AUDIO_STSZ + ENTRY_SIZE_AUDIO_STCO) * nb_audio_frames);
+      break;
+    }
+
+    qtmux->audio_expected_trailer_size = exp_size;
+  }
+
+  qtmux->expected_trailer_size += qtmux->video_expected_trailer_size + qtmux->audio_expected_trailer_size;
+
+  /*
+  GST_INFO_OBJECT (qtmux, "pad type %s", GST_PAD_NAME(pad->collect.pad));
+  GST_INFO_OBJECT (qtmux, "VIDEO : stts-entry=[%d], i-frame=[%d], video-sample=[%d]", nb_video_stts_entry, nb_video_i_frames, nb_video_frames);
+  GST_INFO_OBJECT (qtmux, "AUDIO : stts-entry=[%d], audio-sample=[%d]", nb_audio_stts_entry, nb_audio_frames);
+  GST_INFO_OBJECT (qtmux, "expected trailer size %d", qtmux->expected_trailer_size);
+  */
+
+  return;
+}
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
 
 static void
 gst_qt_mux_base_init (gpointer g_class)
@@ -376,6 +601,9 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
   GParamFlags streamable_flags;
   const gchar *streamable_desc;
   gboolean streamable;
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+  GParamSpec *tspec = NULL;
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
 #define STREAMABLE_DESC "If set to true, the output should be as if it is to "\
   "be streamed and hence no indexes written or duration written."
 
@@ -478,6 +706,16 @@ gst_qt_mux_class_init (GstQTMuxClass * klass)
           "Multiplier for converting reserved-max-duration into bytes of header to reserve, per second, per track",
           0, 10000, DEFAULT_RESERVED_BYTES_PER_SEC_PER_TRAK,
           G_PARAM_READWRITE | G_PARAM_CONSTRUCT | G_PARAM_STATIC_STRINGS));
+
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+  tspec = g_param_spec_uint("expected-trailer-size", "Expected Trailer Size",
+    "Expected trailer size (bytes)",
+    0, G_MAXUINT, 0, G_PARAM_READABLE | G_PARAM_STATIC_STRINGS);
+  if (tspec)
+    g_object_class_install_property(gobject_class, PROP_EXPECTED_TRAILER_SIZE, tspec);
+  else
+    GST_ERROR("g_param_spec failed for \"expected-trailer-size\"");
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
 
   gstelement_class->request_new_pad =
       GST_DEBUG_FUNCPTR (gst_qt_mux_request_new_pad);
@@ -603,6 +841,12 @@ gst_qt_mux_reset (GstQTMux * qtmux, gboolean alloc)
   qtmux->last_moov_update = GST_CLOCK_TIME_NONE;
   qtmux->muxed_since_last_update = 0;
   qtmux->reserved_duration_remaining = GST_CLOCK_TIME_NONE;
+
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+  qtmux->expected_trailer_size = 0;
+  qtmux->video_expected_trailer_size = 0;
+  qtmux->audio_expected_trailer_size = 0;
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
 }
 
 static void
@@ -3244,6 +3488,10 @@ gst_qt_mux_add_buffer (GstQTMux * qtmux, GstQTPad * pad, GstBuffer * buf)
     }
   }
 
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+  gst_qt_mux_update_expected_trailer_size(qtmux, pad);
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
+
   if (buf)
     gst_buffer_unref (buf);
 
@@ -4417,6 +4665,11 @@ gst_qt_mux_get_property (GObject * object,
     case PROP_RESERVED_BYTES_PER_SEC:
       g_value_set_uint (value, qtmux->reserved_bytes_per_sec_per_trak);
       break;
+#ifdef TIZEN_FEATURE_GST_MUX_ENHANCEMENT
+    case PROP_EXPECTED_TRAILER_SIZE:
+      g_value_set_uint(value, qtmux->expected_trailer_size);
+      break;
+#endif /* TIZEN_FEATURE_GST_MUX_ENHANCEMENT */
     default:
       G_OBJECT_WARN_INVALID_PROPERTY_ID (object, prop_id, pspec);
       break;
