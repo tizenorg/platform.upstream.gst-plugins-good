@@ -850,6 +850,15 @@ done:
           demux->taglist = gst_tag_list_new_empty ();
         gst_tag_list_add (demux->taglist, GST_TAG_MERGE_REPLACE,
             GST_TAG_AUDIO_CODEC, codec_name, NULL);
+#ifdef GST_EXT_FLVDEMUX_MODIFICATION
+        GST_DEBUG_OBJECT (demux, "post tag msg %" GST_PTR_FORMAT,
+            demux->taglist);
+
+        /* post message flv tag (for early recive application) */
+        gst_element_post_message (GST_ELEMENT_CAST (demux),
+            gst_message_new_tag (GST_OBJECT_CAST (demux),
+                gst_tag_list_copy (demux->taglist)));
+#endif
         g_free (codec_name);
       }
 

@@ -918,6 +918,12 @@ gst_qtdemux_push_tags (GstQTDemux * qtdemux, QtDemuxStream * stream)
           stream->pending_tags);
       gst_pad_push_event (stream->pad,
           gst_event_new_tag (stream->pending_tags));
+#ifdef GST_EXT_QTDEMUX_MODIFICATION
+      /* post message qtdemux tag (for early recive application) */
+      gst_element_post_message (GST_ELEMENT_CAST (qtdemux),
+            gst_message_new_tag (GST_OBJECT_CAST (qtdemux),
+                  gst_tag_list_copy (stream->pending_tags)));
+#endif
       stream->pending_tags = NULL;
     }
 
