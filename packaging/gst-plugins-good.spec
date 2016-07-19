@@ -3,7 +3,7 @@
 
 Name:           gst-plugins-good
 Version:        1.6.1
-Release:        9
+Release:        10
 License:        LGPL-2.1+
 Summary:        GStreamer Streaming-Media Framework Plug-Ins
 Url:            http://gstreamer.freedesktop.org/
@@ -111,7 +111,6 @@ export CFLAGS+=" -DGST_EXT_V4L2SRC_MODIFIED\
 	--disable-cutter\
 	--disable-dtmf\
 	--disable-imagefreeze\
-	--disable-multifile\
 	--disable-oss4\
 	--disable-oss\
 	--disable-shapewipe
@@ -159,7 +158,7 @@ make %{?_smp_mflags} CFLAGS+="-Wno-error" CXXFLAGS+="-Wno-error"
 %{_libdir}/gstreamer-%{gst_branch}/libgstmatroska.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstmonoscope.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstmulaw.so
-#%{_libdir}/gstreamer-%{gst_branch}/libgstmultifile.so
+%{_libdir}/gstreamer-%{gst_branch}/libgstmultifile.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstmultipart.so
 %{_libdir}/gstreamer-%{gst_branch}/libgstnavigationtest.so
 #%{_libdir}/gstreamer-%{gst_branch}/libgstoss4audio.so
